@@ -5,12 +5,13 @@
   crawl      download matches (respects personal-key rate limits)
   serve      open the local app with live champ-select picks
   recommend  one-off recommendation from the terminal
+  companion  send champ select to your hosted site while you play
 """
 from __future__ import annotations
 
 import argparse
 
-from . import config, crawl, db, ddragon, engine, me
+from . import companion, config, crawl, db, ddragon, engine, me
 from .riot import RiotClient, RiotError
 from .stats import Stats
 
@@ -21,6 +22,7 @@ def main(argv=None):
     sub.add_parser("sync-me")
     s = sub.add_parser("seed")
     s.add_argument("--pages", type=int, default=1, help="ladder pages per division (205 players each)")
+    s.add_argument("--if-empty", action="store_true", help="skip when players are already saved")
     c = sub.add_parser("crawl")
     c.add_argument("--max-requests", type=int, default=1000)
     c.add_argument("--per-player", type=int, default=10)
@@ -34,10 +36,16 @@ def main(argv=None):
     r.add_argument("--allies", default="")
     r.add_argument("--enemies", default="")
     r.add_argument("--bans", default="")
+    sub.add_parser("companion")
     args = ap.parse_args(argv)
 
     cfg = config.load()
-    conn = db.connect(cfg.db_path)
+    if args.cmd == "companion":
+        if not cfg.site_url or not cfg.site_password:
+            raise SystemExit("Set site_url and site_password in config.json first.")
+        companion.run(cfg.site_url, cfg.site_password)
+        return
+    conn = db.connect(cfg.db_target)
 
     if args.cmd in ("sync-me", "seed", "crawl"):
         try:
@@ -50,7 +58,10 @@ def main(argv=None):
                     raise SystemExit("Set riot_id in config.json first.")
                 me.sync(client, conn, cfg.riot_id)
             elif args.cmd == "seed":
-                crawl.seed_players(client, conn, cfg.crawl_tiers, args.pages)
+                if args.if_empty and conn.execute("SELECT 1 FROM players LIMIT 1").fetchone():
+                    print("Players already saved; skipping seed.")
+                else:
+                    crawl.seed_players(client, conn, cfg.crawl_tiers, args.pages)
             else:
                 if not conn.execute("SELECT 1 FROM players LIMIT 1").fetchone():
                     raise SystemExit("No players to crawl yet. Run: python -m pickhelper seed")

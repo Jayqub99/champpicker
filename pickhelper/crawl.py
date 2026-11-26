@@ -7,17 +7,17 @@ only adds new games.
 from __future__ import annotations
 
 import random
-import sqlite3
 import time
 
 from . import db
 from .riot import RiotClient, RiotError
+from .db import Database
 
 APEX = ("MASTER", "GRANDMASTER", "CHALLENGER")
 DIVISIONS = ("I", "II", "III", "IV")
 
 
-def seed_players(client: RiotClient, conn: sqlite3.Connection, tiers: list[str],
+def seed_players(client: RiotClient, conn: Database, tiers: list[str],
                  pages_per_division: int = 1, log=print) -> int:
     added = 0
     for tier in tiers:
@@ -36,7 +36,7 @@ def seed_players(client: RiotClient, conn: sqlite3.Connection, tiers: list[str],
                     except RiotError:
                         continue
                 if puuid:
-                    cur = conn.execute("INSERT OR IGNORE INTO players (puuid, tier) VALUES (?,?)",
+                    cur = conn.execute("INSERT INTO players (puuid, tier) VALUES (?,?) ON CONFLICT DO NOTHING",
                                        (puuid, tier))
                     added += cur.rowcount
         conn.commit()
@@ -44,7 +44,7 @@ def seed_players(client: RiotClient, conn: sqlite3.Connection, tiers: list[str],
     return added
 
 
-def crawl(client: RiotClient, conn: sqlite3.Connection, max_requests: int = 1000,
+def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
           matches_per_player: int = 10, log=print, timelines: bool = False,
           is_completed_item=lambda item_id: True) -> int:
     """Fetch new matches until the request budget runs out. Returns matches stored.

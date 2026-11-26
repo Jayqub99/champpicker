@@ -5,11 +5,11 @@ beats the champion's own win rate, among options with a real sample.
 """
 from __future__ import annotations
 
-import sqlite3
 from collections import Counter
 from itertools import combinations
 
 from .ddragon import Champions
+from .db import Database
 
 
 def _split(text: str | None) -> list[int]:
@@ -49,7 +49,7 @@ def skill_priority(orders: list[str]) -> str:
     return votes.most_common(1)[0][0].replace(">", " > ") if votes else ""
 
 
-def champion_build(conn: sqlite3.Connection, patches: list[str], cid: int, pos: str,
+def champion_build(conn: Database, patches: list[str], cid: int, pos: str,
                    game: Champions) -> dict:
     if not patches:
         return {"games": 0}

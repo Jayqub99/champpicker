@@ -1,5 +1,7 @@
 import io
+import itertools
 import json
+import os
 import random
 import sys
 import tempfile
@@ -17,6 +19,28 @@ from pickhelper.config import Config  # noqa: E402
 from pickhelper.ddragon import Champions  # noqa: E402
 from pickhelper.riot import RateLimiter, RiotClient, RiotError  # noqa: E402
 from pickhelper.stats import Stats  # noqa: E402
+
+# Set TEST_DATABASE_URL to a Postgres URL to run everything against Postgres too.
+PG_URL = os.environ.get("TEST_DATABASE_URL", "")
+_schemas = itertools.count(1)
+
+
+def db_target() -> str:
+    """A fresh empty database: SQLite in memory, or a new Postgres schema."""
+    if not PG_URL:
+        return ":memory:"
+    import psycopg
+    schema = f"t{os.getpid()}_{next(_schemas)}"
+    with psycopg.connect(PG_URL, autocommit=True) as c:
+        c.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        c.execute(f"CREATE SCHEMA {schema}")
+    sep = "&" if "?" in PG_URL else "?"
+    return f"{PG_URL}{sep}options=-csearch_path%3D{schema}"
+
+
+def fresh_db():
+    return db.connect(db_target())
+
 
 # Tiny fake champion list: id -> (name, usual role)
 CHAMPS = {1: ("Jinx", "BOTTOM"), 2: ("Caitlyn", "BOTTOM"), 3: ("Ezreal", "BOTTOM"),
@@ -94,7 +118,7 @@ def build_db(conn, n=3000, seed=7):
 class EngineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.conn = db.connect(":memory:")
+        cls.conn = fresh_db()
         build_db(cls.conn)
         cls.stats = Stats(cls.conn, 2)
         cls.names = champions().name
@@ -116,7 +140,7 @@ class EngineTests(unittest.TestCase):
         self.assertIn("Jinx", [p.name for p in picks])
 
     def test_comfort_moves_ranking(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         build_db(conn, n=600)
         for i in range(30):  # 30 Caitlyn games, 24 won
             conn.execute("INSERT INTO my_games VALUES (?,?,?,?,?)", (f"me{i}", 2, "BOTTOM", int(i < 24), 0))
@@ -125,7 +149,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(no_enemy[0].name, "Caitlyn")
 
     def test_pool_from_history(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         build_db(conn, n=300)
         conn.execute("INSERT INTO my_games VALUES ('a',3,'BOTTOM',1,0)")
         conn.execute("INSERT INTO my_games VALUES ('b',3,'BOTTOM',0,0)")
@@ -133,14 +157,14 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(engine.candidate_pool(Stats(conn, 2), "BOTTOM"), [3])
 
     def test_empty_database_is_safe(self):
-        stats = Stats(db.connect(":memory:"), 2)
+        stats = Stats(fresh_db(), 2)
         self.assertEqual(stats.patches, [])
         picks = engine.recommend(stats, "BOTTOM", [], [4], [], [1, 2], names=self.names)
         self.assertEqual(len(picks), 2)
         self.assertAlmostEqual(picks[0].win_pct, picks[1].win_pct, delta=0.01)
 
     def test_only_recent_patches_count(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         build_db(conn, n=200)
         db.store_match(conn, fake_match("old", ([7, 9, 8, 1, 5], [10, 12, 11, 4, 13]), True, patch="14.1"))
         self.assertEqual(Stats(conn, 1).patches, ["15.23"])
@@ -149,7 +173,7 @@ class EngineTests(unittest.TestCase):
 
 class StoreTests(unittest.TestCase):
     def test_remake_and_missing_roles_skipped(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         m = fake_match("x", ([7, 9, 8, 1, 5], [10, 12, 11, 4, 13]), True)
         m["info"]["gameDuration"] = 200
         self.assertFalse(db.store_match(conn, m))
@@ -252,15 +276,15 @@ class ServerTests(unittest.TestCase):
     def test_endpoints(self):
         from pickhelper import server
         from http.server import ThreadingHTTPServer
-        tmp = tempfile.mkdtemp()
-        cfg = Config(role="BOTTOM")
-        cfg_path = Path(tmp) / "x.sqlite3"
-        type(cfg).db_path = property(lambda self: cfg_path)
-        conn = db.connect(cfg_path)
+        target = db_target() if PG_URL else str(Path(tempfile.mkdtemp()) / "x.sqlite3")
+        cfg = Config(role="BOTTOM", database_url=target if PG_URL else "")
+        if not PG_URL:
+            type(cfg).db_path = property(lambda self: Path(target))
+        conn = db.connect(target)
         build_db(conn, n=800)
         conn.close()
-        app = server.App(cfg, champions())
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(app))
+        app = server.App(cfg, champions(), watching=True)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(lambda: app))
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{httpd.server_address[1]}"
         get = lambda p: json.loads(urllib.request.urlopen(base + p).read())
@@ -286,10 +310,94 @@ class ServerTests(unittest.TestCase):
             httpd.shutdown()
 
 
+class HostedTests(unittest.TestCase):
+    """The Vercel setup: password, companion drafts, rewritten paths."""
+
+    def setUp(self):
+        from pickhelper import server
+        from http.server import ThreadingHTTPServer
+        target = db_target() if PG_URL else str(Path(tempfile.mkdtemp()) / "h.sqlite3")
+        conn = db.connect(target)
+        build_db(conn, n=600)
+        conn.execute("INSERT INTO my_games VALUES ('m1', 1, 'BOTTOM', 1, 0)")
+        conn.execute("INSERT INTO my_games VALUES ('m2', 1, 'BOTTOM', 1, 0)")
+        conn.commit()
+        conn.close()
+        cfg = Config(role="BOTTOM", database_url=target if PG_URL else "", site_password="hunter2")
+        if not PG_URL:
+            type(cfg).db_path = property(lambda self: Path(target))
+        self.app = server.App(cfg, champions(), watching=False)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(lambda: self.app))
+        self.httpd.site_password = "hunter2"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def call(self, path, data=None, headers=None):
+        req = urllib.request.Request(self.base + path, data=data, headers=headers or {},
+                                     method="POST" if data is not None else "GET")
+        opener = urllib.request.build_opener(NoRedirect)
+        try:
+            with opener.open(req) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def test_password_required(self):
+        status, _, body = self.call("/")
+        self.assertIn(b"Password", body)
+        self.assertEqual(self.call("/api/status")[0], 401)
+        self.assertEqual(self.call("/login", b"password=wrong")[0], 401)
+        status, headers, _ = self.call("/login", b"password=hunter2")
+        self.assertEqual(status, 303)
+        cookie = headers["Set-Cookie"].split(";")[0]
+        status, _, body = self.call("/api/status", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["matches"], 600)
+        self.assertEqual(self.call("/api/status", headers={"Authorization": "Bearer hunter2"})[0], 200)
+        self.assertEqual(self.call("/api/status", headers={"Cookie": "cp_session=forged"})[0], 401)
+
+    def test_vercel_rewrite_path(self):
+        status, _, body = self.call("/api/index?__path=/api/tierlist&role=BOTTOM",
+                                    headers={"Authorization": "Bearer hunter2"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body))
+
+    def test_companion_draft_shows_live_picks(self):
+        from pickhelper import companion
+        auth = {"Authorization": "Bearer hunter2"}
+        live = json.loads(self.call("/api/live", headers=auth)[2])
+        self.assertEqual(live["connected"], False)
+        cs = lcu.parse_session(SESSION)
+        sent = []
+
+        def opener(req, timeout):
+            sent.append(req)
+            return urllib.request.build_opener().open(req, timeout=timeout)
+        companion.send(self.base, "hunter2", companion.payload_from(cs), opener=opener)
+        self.assertEqual(sent[0].get_header("Authorization"), "Bearer hunter2")
+        live = json.loads(self.call("/api/live", headers=auth)[2])
+        self.assertTrue(live["in_champ_select"])
+        self.assertEqual(live["role"], "BOTTOM")
+        self.assertEqual(live["draft"]["enemies"], ["Draven", "Nautilus"])
+        self.assertEqual(live["picks"][0]["name"], "Jinx")
+        companion.send(self.base, "hunter2", companion.payload_from(None))
+        self.assertFalse(json.loads(self.call("/api/live", headers=auth)[2])["in_champ_select"])
+        self.assertEqual(self.call("/api/live", b"{}")[0], 401)  # no password, no write
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 class BuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.conn = db.connect(":memory:")
+        cls.conn = fresh_db()
         build_db(cls.conn, n=1200)
         cls.game = champions()
 
@@ -308,7 +416,7 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("skills", b)  # no timelines crawled
 
     def test_timeline_adds_skills_start_and_order(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         match = fake_match("T1", ([7, 9, 8, 1, 5], [10, 12, 11, 4, 13]), True)
         db.store_match(conn, match)
         events = [{"type": "ITEM_PURCHASED", "participantId": 4, "itemId": 1055, "timestamp": 20_000},
@@ -326,6 +434,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(row["item_order"], "6672,3031,3094")
         self.assertEqual(builds.skill_priority([row["skill_order"]]), "Q > W > E")
 
+    @unittest.skipIf(PG_URL, "SQLite file upgrade only")
     def test_old_database_is_upgraded(self):
         path = Path(tempfile.mkdtemp()) / "old.sqlite3"
         import sqlite3
@@ -375,7 +484,7 @@ class CrawlTests(unittest.TestCase):
 
             def match_ids(self, puuid, count=10, queue=None, start=0):
                 return []
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         conn.execute("INSERT INTO matches (match_id, patch, has_builds) VALUES ('OLD1', '15.23', 0)")
         self.assertEqual(crawl.crawl(Client(), conn, max_requests=10, log=lambda *a: None), 1)
         self.assertTrue(db.has_match(conn, "OLD1"))
@@ -383,7 +492,7 @@ class CrawlTests(unittest.TestCase):
 
 class ProfileTests(unittest.TestCase):
     def test_lookup(self):
-        conn = db.connect(":memory:")
+        conn = fresh_db()
         d = profile.lookup(FakeRiot(), conn, "Test#NA1", champions())
         self.assertEqual(d["riot_id"], "Test#NA1")
         self.assertEqual(d["ranks"][0]["tier"], "Emerald")

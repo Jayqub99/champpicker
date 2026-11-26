@@ -79,6 +79,33 @@ Terminal version:
 python -m pickhelper recommend --enemies "Draven,Nautilus" --allies "Thresh"
 ```
 
+## Host it on Vercel
+
+The same code runs as a password-protected site on Vercel, with the data in a free Neon Postgres database and a nightly GitHub job doing the crawl. Your PC only runs the small companion while you play, so live picks still work.
+
+One-time setup:
+
+1. **Riot key that doesn't expire daily:** in the Riot Developer Portal, register Champ Picker as a personal product. The free development key works too, but you'd have to update it every day.
+2. **Vercel project:** in your Vercel account, Add New, Project, import `champpicker`. Leave the framework as Other and deploy.
+3. **Database:** in the Vercel project, Storage, create a Neon Postgres database and connect it to the project. That adds `DATABASE_URL` for you.
+4. **Vercel settings:** Settings, Environment Variables, add:
+   - `SITE_PASSWORD`: any password you'll remember. The site refuses to run without one.
+   - `RIOT_API_KEY`: your Riot key (for profile lookups).
+   - `RIOT_ID`: your Riot ID, e.g. `Name#NA1`.
+   - `MAIN_ROLE`: `BOTTOM` (or your role).
+
+   Then redeploy (Deployments, the latest one, Redeploy).
+5. **Nightly crawl:** in GitHub, the repo's Settings, Secrets and variables, Actions, add `DATABASE_URL` (copy it from the Vercel project's environment variables), `RIOT_API_KEY` and `RIOT_ID`. Then Actions, Nightly crawl, Run workflow for the first fill. After that it runs every night at 2 AM Eastern, spending 8,000 requests (about 2 hours 40 minutes).
+6. **Companion on your PC:** in `config.json`, set `site_url` to your Vercel address (`https://...vercel.app`) and `site_password` to the same password. When you play, run:
+
+   ```powershell
+   python -m pickhelper companion
+   ```
+
+   It reads champ select (never your teammates' names) and sends it to the site. Close it when you're done.
+
+Keep the repo public if you want the nightly crawl free: GitHub Actions is free without limit on public repos, while private repos get a monthly allowance the nightly crawl would use up. No keys or passwords are in the code; they live in Vercel and GitHub secrets.
+
 ## Settings (`config.json`)
 
 | Key | Meaning |
@@ -88,12 +115,17 @@ python -m pickhelper recommend --enemies "Draven,Nautilus" --allies "Thresh"
 | `pool` | Optional fixed list of champion names. Empty means "champions I've played 2+ times in this role recently" |
 | `crawl_tiers` | Ladder tiers to sample, e.g. `EMERALD`, `DIAMOND`, `MASTER` |
 | `patches_to_use` | How many recent patches feed the stats |
+| `site_url` | Your Vercel address, for the companion |
+| `site_password` | Your site password, for the companion |
+| `database_url` | Optional: use a Postgres database instead of the local file (same as `DATABASE_URL`) |
 
 ## Tests
 
 ```powershell
 python -m unittest discover -s tests
 ```
+
+Set `TEST_DATABASE_URL` to a Postgres URL to run the same tests against Postgres.
 
 ## Notes
 

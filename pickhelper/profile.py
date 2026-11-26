@@ -1,12 +1,12 @@
 """Player lookup: rank and recent games for any Riot ID (about 12 requests each)."""
 from __future__ import annotations
 
-import sqlite3
 import time
 
 from . import db
 from .ddragon import Champions
 from .riot import RiotClient
+from .db import Database
 
 QUEUES = {420: "Ranked Solo", 440: "Ranked Flex", 400: "Normal Draft", 430: "Normal Blind",
           450: "ARAM", 490: "Quickplay", 1700: "Arena", 1900: "URF"}
@@ -15,7 +15,7 @@ _cache: dict[str, tuple[float, dict]] = {}
 CACHE_SECONDS = 120
 
 
-def lookup(client: RiotClient, conn: sqlite3.Connection, riot_id: str, game: Champions,
+def lookup(client: RiotClient, conn: Database, riot_id: str, game: Champions,
            count: int = 10) -> dict:
     key = riot_id.strip().lower()
     hit = _cache.get(key)

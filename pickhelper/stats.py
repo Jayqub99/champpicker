@@ -5,8 +5,9 @@ balance changes fade out on their own.
 """
 from __future__ import annotations
 
-import sqlite3
 from functools import cached_property
+
+from .db import Database
 
 
 def _patch_key(p: str):
@@ -17,7 +18,7 @@ def _patch_key(p: str):
 
 
 class Stats:
-    def __init__(self, conn: sqlite3.Connection, patches_to_use: int = 2):
+    def __init__(self, conn: Database, patches_to_use: int = 2):
         self.conn = conn
         rows = conn.execute("SELECT patch, COUNT(*) n FROM matches GROUP BY patch").fetchall()
         ordered = sorted(rows, key=lambda r: _patch_key(r["patch"]), reverse=True)
@@ -63,7 +64,8 @@ class Stats:
                        AVG(p.true_dmg) tr, AVG(p.dmg_taken) tk, AVG(p.cc_time) cc
                 FROM participants p JOIN matches m USING (match_id)
                 WHERE {clause} GROUP BY c"""
-        rows = self.conn.execute(q, args).fetchall()
+        rows = [{k: (float(r[k]) if r[k] is not None and k != "c" else r[k]) for k in r.keys()}
+                for r in self.conn.execute(q, args).fetchall()]
         if not rows:
             return {}
         total = sum(r["n"] for r in rows)
@@ -118,7 +120,7 @@ class Stats:
                                     AND b.position = ?
                 JOIN matches m ON m.match_id = a.match_id
                 WHERE {clause} AND a.position = ? AND a.champion_id = ?
-                GROUP BY o HAVING n >= ?"""
+                GROUP BY o HAVING COUNT(*) >= ?"""
         return [dict(r) for r in self.conn.execute(q, [other_pos] + list(args) + [pos, cid, min_games])]
 
     @cached_property

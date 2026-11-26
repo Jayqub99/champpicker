@@ -1,12 +1,19 @@
-"""Local web app: live best-pick, champion pages, tier list and player lookup.
+"""The Champ Picker site: live best-pick, champion pages, tier list and player lookup.
 
-Serves on 127.0.0.1 only. A background thread watches the League client
-for champ select and recomputes picks whenever the draft changes.
+Runs two ways with the same code:
+- On your PC (`python -m pickhelper serve`): serves on 127.0.0.1, and a background
+  thread watches the League client for champ select.
+- On Vercel (api/index.py): the companion on your PC sends the draft to
+  /api/live, and the site keeps it in the database.
+
+When SITE_PASSWORD is set every page needs it; on Vercel the site refuses to
+run without one.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
-import sqlite3
 import threading
 import time
 import traceback
@@ -15,31 +22,49 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import builds, db, engine, lcu, profile
-from .config import Config
-from .riot import RiotClient, RiotError
+from .config import ON_VERCEL, Config
 from .ddragon import Champions
+from .riot import RiotClient, RiotError
 from .stats import Stats
 
 STATIC = Path(__file__).resolve().parent / "static"
+LIVE_STALE_SECONDS = 20   # companion silent this long = treat as offline
+COOKIE = "cp_session"
 
 
 class App:
-    def __init__(self, cfg: Config, champs: Champions):
+    def __init__(self, cfg: Config, champs: Champions, watching: bool = False):
         self.cfg = cfg
         self.champs = champs
-        self.lock = threading.Lock()
-        self.conn = db.connect(cfg.db_path)
+        self.watching = watching      # True when this process watches the League client itself
+        self.lock = threading.RLock()
+        self.conn = db.connect(cfg.db_target)
         self.stats = Stats(self.conn, cfg.patches_to_use)
         self.live = {"connected": False, "in_champ_select": False}
         self._last_key = None
         self._match_count = self._count()
         self.riot = RiotClient(cfg.api_key, cfg.platform, cfg.region) if cfg.api_key else None
 
+    # -- database upkeep ----------------------------------------------------------
     def _count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
 
+    def ensure_db(self) -> None:
+        """Reconnect if a hosted database dropped the connection (it sleeps when idle)."""
+        raw = self.conn.raw
+        if self.conn.kind == "postgres" and (raw.closed or raw.broken):
+            with self.lock:
+                self.conn = db.connect(self.cfg.db_target)
+                self.stats = Stats(self.conn, self.cfg.patches_to_use)
+
+    def end_request(self) -> None:
+        try:
+            self.conn.commit()  # ends the read transaction on Postgres
+        except Exception:
+            pass
+
     def refresh(self) -> None:
-        """Pick up matches a crawl added while the app was running."""
+        """Pick up matches a crawl added while the site was running."""
         with self.lock:
             n = self._count()
             if n != self._match_count:
@@ -65,7 +90,7 @@ class App:
                     "my_games": self.conn.execute("SELECT COUNT(*) FROM my_games").fetchone()[0],
                     "role": role, "riot_id_set": bool(self.cfg.riot_id),
                     "pool": [self.champs.name(c) for c in self.pool(role)],
-                    "ddragon_version": self.champs.version}
+                    "ddragon_version": self.champs.version, "hosted": not self.watching}
 
     def counters(self, cid: int, role: str) -> dict:
         with self.lock:
@@ -120,15 +145,17 @@ class App:
                                  "image": self.champs.by_id.get(r["o"], {}).get("image")})
                 page["duos"] = sorted(duos, key=lambda x: -x["adjusted_win_pct"])[:8]
                 page["duo_role"] = partner
-        page["matchups"] = self.counters(cid, role)
+            page["matchups"] = self.counters(cid, role)
         return page
 
     def player(self, riot_id: str) -> dict:
         if not self.riot:
-            return {"error": "Add your Riot API key to config.json to look up players."}
-        conn = db.connect(self.cfg.db_path)  # own connection: lookups take several seconds
+            return {"error": "Add your Riot API key (RIOT_API_KEY) to look up players."}
+        conn = db.connect(self.cfg.db_target)  # own connection: lookups take several seconds
         try:
-            return profile.lookup(self.riot, conn, riot_id, self.champs)
+            result = profile.lookup(self.riot, conn, riot_id, self.champs)
+            conn.commit()
+            return result
         except RiotError as e:
             return {"error": e.hint() or str(e)}
         except ValueError as e:
@@ -173,6 +200,38 @@ class App:
                          "picks": self.recommend(role, cs.allies, cs.enemies, cs.bans),
                          "updated": time.time()}
 
+    def save_draft(self, payload: dict) -> None:
+        """Store what the companion on your PC sent (hosted mode)."""
+        with self.lock:
+            self.conn.execute("INSERT INTO live_state (id, payload, updated) VALUES (1, ?, ?) "
+                              "ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, updated = excluded.updated",
+                              (json.dumps(payload), int(time.time())))
+            self.conn.commit()
+
+    def live_state(self) -> dict:
+        if self.watching:
+            return self.live
+        with self.lock:
+            row = self.conn.execute("SELECT payload, updated FROM live_state WHERE id = 1").fetchone()
+        if not row or time.time() - row["updated"] > LIVE_STALE_SECONDS:
+            self._last_key = None
+            return {"connected": False, "in_champ_select": False, "companion": False}
+        data = json.loads(row["payload"])
+        if not data.get("in_champ_select"):
+            self._last_key = None
+            return {"connected": True, "in_champ_select": False, "companion": True}
+        self._update(draft_from_payload(data))
+        return self.live
+
+
+def draft_from_payload(data: dict) -> lcu.ChampSelect:
+    def ids(xs):
+        return [int(x) for x in xs or [] if str(x).isdigit()]
+    allies = [engine.Ally(int(a["champion_id"]), a.get("position"), bool(a.get("hover")))
+              for a in data.get("allies") or [] if str(a.get("champion_id", "")).isdigit()]
+    return lcu.ChampSelect(data.get("phase", ""), data.get("my_position"), int(data.get("my_champion") or 0),
+                           allies, ids(data.get("enemies")), ids(data.get("bans")))
+
 
 TIERS = ["S+", "S", "A", "B", "C", "D"]
 
@@ -190,71 +249,165 @@ def _ids(app: App, raw: str) -> list[int]:
     return [c for c in (app.champs.find(x) for x in raw.split(",") if x.strip()) if c]
 
 
-def make_handler(app: App):
+def session_token(password: str) -> str:
+    return hmac.new(password.encode(), b"champpicker-session", hashlib.sha256).hexdigest()
+
+
+LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Champ Picker</title>
+<style>body{margin:0;background:#0e1116;color:#e6e9ef;font:15px system-ui,sans-serif;display:grid;place-items:center;height:100vh}
+form{background:#171b22;border:1px solid #2a303b;border-radius:10px;padding:24px;width:min(320px,90vw)}
+h1{color:#c8a75a;font-size:18px;margin:0 0 12px}input,button{width:100%;padding:9px;border-radius:6px;font:inherit;box-sizing:border-box}
+input{background:#0e1116;color:#e6e9ef;border:1px solid #2a303b;margin-bottom:10px}button{background:#c8a75a;border:0;font-weight:600;cursor:pointer}
+p{color:#e5636b;font-size:13px}</style></head><body><form method="post" action="/login">
+<h1>Champ Picker</h1>%ERROR%<input type="password" name="password" placeholder="Password" autofocus>
+<button>Sign in</button></form></body></html>"""
+
+
+def make_handler(app_factory):
+    """app_factory returns the App (built lazily on Vercel so errors show on the page)."""
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
-        def _json(self, payload, status=200):
-            body = json.dumps(payload).encode()
+        # -- helpers ----------------------------------------------------------
+        def _send(self, status: int, body: bytes, ctype: str, headers: dict | None = None):
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self):
+        def _json(self, payload, status=200):
+            self._send(status, json.dumps(payload).encode(), "application/json")
+
+        def _route(self):
             url = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
-            role = q.get("role", app.cfg.role).upper()
+            path = q.pop("__path", None) or url.path   # Vercel rewrite passes the original path
+            return path, q
+
+        def _authorized(self, password: str) -> bool:
+            if not password:
+                return True
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], password):
+                return True
+            for part in self.headers.get("Cookie", "").split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == COOKIE and hmac.compare_digest(value, session_token(password)):
+                    return True
+            return False
+
+        def _password(self) -> str | None:
+            """The site password, or None when the hosted site has none (refuse to serve)."""
+            from .config import load
+            pw = getattr(self.server, "site_password", None)
+            if pw is None:
+                pw = load().site_password
+            if ON_VERCEL and not pw:
+                return None
+            return pw
+
+        def _login_page(self, error: str = "", status: int = 200):
+            body = LOGIN_PAGE.replace("%ERROR%", f"<p>{error}</p>" if error else "")
+            self._send(status, body.encode(), "text/html; charset=utf-8")
+
+        # -- POST: sign in, companion drafts -------------------------------------
+        def do_POST(self):
+            path, _ = self._route()
+            password = self._password()
+            if password is None:
+                return self._json({"error": "Set SITE_PASSWORD in Vercel first."}, 503)
+            length = min(int(self.headers.get("Content-Length") or 0), 100_000)
+            body = self.rfile.read(length) if length else b""
+            if path == "/login":
+                form = {k: v[0] for k, v in parse_qs(body.decode("utf-8", "replace")).items()}
+                if password and hmac.compare_digest(form.get("password", ""), password):
+                    secure = "; Secure" if ON_VERCEL else ""
+                    return self._send(303, b"", "text/plain", {
+                        "Location": "/",
+                        "Set-Cookie": f"{COOKIE}={session_token(password)}; Path=/; HttpOnly; "
+                                      f"SameSite=Lax; Max-Age=2592000{secure}"})
+                return self._login_page("Wrong password.", 401)
+            if not self._authorized(password):
+                return self._json({"error": "unauthorized"}, 401)
+            if path == "/api/live":
+                try:
+                    app = app_factory()
+                    app.ensure_db()
+                    app.save_draft(json.loads(body or b"{}"))
+                    return self._json({"ok": True})
+                except Exception as e:
+                    traceback.print_exc()
+                    return self._json({"error": str(e)}, 500)
+            self._json({"error": "not found"}, 404)
+
+        # -- GET: pages and data --------------------------------------------------
+        def do_GET(self):
+            path, q = self._route()
+            password = self._password()
+            if password is None:
+                return self._send(503, b"Set SITE_PASSWORD in your Vercel project settings, then redeploy.",
+                                  "text/plain; charset=utf-8")
+            if not self._authorized(password):
+                if path.startswith("/api/"):
+                    return self._json({"error": "unauthorized"}, 401)
+                return self._login_page()
+            if path in ("/", "/index.html"):
+                return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
             try:
-                if url.path in ("/", "/index.html"):
-                    body = (STATIC / "index.html").read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(body)
-                elif url.path == "/api/status":
+                app = app_factory()
+                app.ensure_db()
+                role = q.get("role", app.cfg.role).upper()
+                if path == "/api/status":
                     app.refresh()
                     self._json(app.status())
-                elif url.path == "/api/live":
-                    self._json(app.live)
-                elif url.path == "/api/champions":
+                elif path == "/api/live":
+                    self._json(app.live_state())
+                elif path == "/api/champions":
                     self._json(app.champs.list())
-                elif url.path == "/api/recommend":
+                elif path == "/api/recommend":
                     allies = [engine.Ally(c) for c in _ids(app, q.get("allies", ""))]
                     self._json(app.recommend(role, allies, _ids(app, q.get("enemies", "")),
                                              _ids(app, q.get("bans", "")), top=int(q.get("top", 5))))
-                elif url.path == "/api/champion":
+                elif path == "/api/champion":
                     app.refresh()
                     cid = app.champs.find(q.get("champion", ""))
                     if not cid:
                         return self._json({"error": "unknown champion"}, 400)
                     self._json(app.champion_page(cid, q.get("role", "").upper() or None))
-                elif url.path == "/api/profile":
+                elif path == "/api/profile":
                     self._json(app.player(q.get("riot_id", "")))
-                elif url.path == "/api/counters":
+                elif path == "/api/counters":
                     cid = app.champs.find(q.get("champion", ""))
                     if not cid:
                         return self._json({"error": "unknown champion"}, 400)
                     self._json(app.counters(cid, role))
-                elif url.path == "/api/tierlist":
+                elif path == "/api/tierlist":
                     app.refresh()
                     self._json(app.tierlist(role))
                 else:
                     self._json({"error": "not found"}, 404)
-            except (sqlite3.Error, ValueError) as e:
+                app.end_request()
+            except Exception as e:
+                traceback.print_exc()
                 self._json({"error": str(e)}, 500)
 
     return Handler
 
 
 def serve(cfg: Config, champs: Champions, port: int = 8777, watch: bool = True):
-    app = App(cfg, champs)
+    app = App(cfg, champs, watching=watch)
     if watch:
         threading.Thread(target=app.poll_forever, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
-    print(f"Pick helper running at http://127.0.0.1:{port}  (Ctrl+C to stop)")
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(lambda: app))
+    server.site_password = cfg.site_password
+    print(f"Champ Picker running at http://127.0.0.1:{port}  (Ctrl+C to stop)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

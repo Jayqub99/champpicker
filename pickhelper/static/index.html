@@ -150,7 +150,11 @@ async function pollLive() {
   try {
     const live = await api("/api/live");
     const st = $("live-state"), out = $("live-picks");
-    if (!live.connected) { st.textContent = "League client not found. Open League and this page updates on its own."; out.hidden = true; }
+    if (!live.connected) {
+      st.textContent = STATUS.hosted
+        ? "Companion not running. On your PC, run: python -m pickhelper companion"
+        : "League client not found. Open League and this page updates on its own.";
+      out.hidden = true; }
     else if (!live.in_champ_select) { st.textContent = "Connected. Waiting for champ select…"; out.hidden = true; }
     else {
       const d = live.draft;

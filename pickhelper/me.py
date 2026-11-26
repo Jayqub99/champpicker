@@ -1,13 +1,13 @@
 """Your own account: mastery and recent ranked games, for the comfort score."""
 from __future__ import annotations
 
-import sqlite3
 
 from . import db
 from .riot import RiotClient, RiotError
+from .db import Database
 
 
-def sync(client: RiotClient, conn: sqlite3.Connection, riot_id: str, games: int = 100,
+def sync(client: RiotClient, conn: Database, riot_id: str, games: int = 100,
          log=print) -> dict:
     account = client.account_by_riot_id(riot_id)
     puuid = account["puuid"]
@@ -41,7 +41,7 @@ def sync(client: RiotClient, conn: sqlite3.Connection, riot_id: str, games: int 
         db.store_match(conn, match)  # your games also feed the general stats
         me = next((p for p in match["info"]["participants"] if p.get("puuid") == puuid), None)
         if me and match["info"].get("gameDuration", 0) >= 300:
-            conn.execute("INSERT OR IGNORE INTO my_games VALUES (?,?,?,?,?)",
+            conn.execute("INSERT INTO my_games VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING",
                          (mid, me["championId"], me.get("teamPosition") or "", int(bool(me["win"])),
                           match["info"].get("gameStartTimestamp")))
             added += 1
