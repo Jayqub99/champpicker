@@ -345,6 +345,7 @@ const $ = id => document.getElementById(id);
 const VIEW = () => $("view");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const api = async path => { const r = await fetch(path); if (r.status === 401) { location.reload(); return {}; } return r.json(); };
+const plural = n => `${num(n)} ${n === 1 ? "game" : "games"}`;
 let STATUS = {}, CHAMPS = [], BYNAME = {};
 
 const SVG = {
@@ -643,7 +644,7 @@ async function profilePage(id) {
   const head = `<div class="phead"><div class="pic">${icon}${d.level ? `<span class="lvl">${num(d.level)}</span>` : ""}</div>
       <div><h1>${esc(gname)} <span>#${esc(tag || "")}</span></h1>
       <div class="muted small" style="margin-top:4px">Last ${d.recent_games} games: <b class="sub">${d.recent_wins}W ${d.recent_games - d.recent_wins}L</b></div></div></div>`;
-  const ranks = (d.ranks || []).length ? d.ranks.map(r => {
+  const ranks = (d.ranks || []).length ? d.ranks.slice().sort((a, b) => (a.queue === "Ranked Solo" ? 0 : 1) - (b.queue === "Ranked Solo" ? 0 : 1)).map(r => {
       const col = TIER_COLOR[r.tier] || "var(--sub)";
       const wr = Math.round(100 * r.wins / Math.max(1, r.wins + r.losses));
       return `<div class="rankcard"><div class="crest" style="color:${col}">${esc((r.tier || "?")[0])}</div>
@@ -653,7 +654,7 @@ async function profilePage(id) {
     : '<div class="muted">Unranked this season</div>';
   const champs = (d.champions || []).map(c => { const wr = Math.round(100 * c.wins / c.games);
       return `<a class="crow" href="${esc(champLink(c.champion))}">${img({ name: c.champion, image: c.image || champ(c.champion).image }, 30)}
-        <div><b>${esc(c.champion)}</b><div class="muted small">${c.games} games</div></div>
+        <div><b>${esc(c.champion)}</b><div class="muted small">${plural(c.games)}</div></div>
         <div style="text-align:right"><b class="${wrClass(wr)}">${wr}%</b><div class="muted small">${c.wins}W ${c.games - c.wins}L</div></div></a>`; }).join("");
   const blank = s => `<span class="ic blank" style="width:${s}px;height:${s}px"></span>`;
   const games = (d.games || []).map(g => {
@@ -801,7 +802,12 @@ function builder() {
 
 // ============================================================ start
 async function init() {
-  STATUS = await api("/api/status");
+  // The first request after a quiet spell wakes the server up and can be slow or fail: retry.
+  for (let i = 0; i < 4; i++) {
+    try { STATUS = await api("/api/status"); if (!STATUS.error) break; } catch (e) { STATUS = {}; }
+    VIEW().innerHTML = '<div class="loading">Waking the server up…</div>';
+    await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+  }
   CHAMPS = await api("/api/champions");
   BYNAME = Object.fromEntries((CHAMPS || []).map(c => [c.name.toLowerCase(), c]));
   const dl = document.createElement("datalist"); dl.id = "champs";
