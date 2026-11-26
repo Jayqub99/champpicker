@@ -1,0 +1,5 @@
+# Your settings and API key stay on your PC
+config.json
+data/
+__pycache__/
+*.pyc

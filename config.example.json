@@ -1,0 +1,9 @@
+{
+  "riot_id": "YourName#NA1",
+  "platform": "na1",
+  "region": "americas",
+  "role": "BOTTOM",
+  "pool": [],
+  "crawl_tiers": ["EMERALD", "DIAMOND", "MASTER"],
+  "patches_to_use": 2
+}
