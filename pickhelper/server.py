@@ -108,21 +108,31 @@ class App:
                 "worst": rows[:10], "best": list(reversed(rows[-10:]))}
 
     def tierlist(self, role: str, min_games: int = 30) -> list[dict]:
+        if role == "ALL":
+            rows = [r for pos in ROLE_ORDER for r in self.tierlist(pos, min_games)]
+            return sorted(rows, key=lambda x: (TIERS.index(x["tier"]), -x["adjusted_win_pct"]))
         with self.lock:
             matches = self.stats.match_count or 1
             bans = self.stats.ban_rates
+            matchups = self.stats.role_matchups(role)
             out = []
             for (c, pos), (n, w) in self.stats.champ_role.items():
                 if pos != role or n < min_games:
                     continue
-                adj = 100 * engine.shrunk(w, n, 0.5, engine.K_BASE)
+                base = engine.shrunk(w, n, 0.5, engine.K_BASE)
+                adj = 100 * base
                 pick = 100 * n / matches          # share of games with this champ in this role
                 ban = 100 * bans.get(c, 0.0)
-                out.append({"champion_id": c, "name": self.champs.name(c), "games": n,
+                hard = sorted(matchups.get(c, []),
+                              key=lambda r: engine.shrunk(r["w"], r["n"], base, engine.K_PAIR))[:3]
+                out.append({"champion_id": c, "name": self.champs.name(c), "role": role, "games": n,
                             "win_pct": round(100 * w / n, 1), "adjusted_win_pct": round(adj, 1),
                             "pick_pct": round(pick, 1), "ban_pct": round(ban, 1),
                             "tier": _tier(adj, pick + ban),
-                            "image": self.champs.by_id.get(c, {}).get("image")})
+                            "image": self.champs.by_id.get(c, {}).get("image"),
+                            "counters": [{"name": self.champs.name(r["o"]),
+                                          "image": self.champs.by_id.get(r["o"], {}).get("image")}
+                                         for r in hard]})
         return sorted(out, key=lambda x: (TIERS.index(x["tier"]), -x["adjusted_win_pct"]))
 
     def champion_page(self, cid: int, role: str | None) -> dict:
@@ -133,6 +143,12 @@ class App:
                     "roles": {k: round(100 * v, 1) for k, v in sorted(roles.items(), key=lambda kv: -kv[1])},
                     "ban_pct": round(100 * self.stats.ban_rates.get(cid, 0.0), 1),
                     "build": builds.champion_build(self.conn, self.stats.patches, cid, role, self.champs)}
+            n, w = self.stats.champ_role.get((cid, role), (0, 0))
+            if n:
+                adj = 100 * engine.shrunk(w, n, 0.5, engine.K_BASE)
+                pick = 100 * n / (self.stats.match_count or 1)
+                page["stats"] = {"games": n, "win_pct": round(100 * w / n, 1), "pick_pct": round(pick, 1),
+                                 "ban_pct": page["ban_pct"], "tier": _tier(adj, pick + page["ban_pct"])}
             partner = engine.DUO.get(role)
             if partner:
                 n, w = self.stats.champ_role.get((cid, role), (0, 0))
@@ -194,11 +210,15 @@ class App:
             self._last_key = key
             self.live = {"connected": True, "in_champ_select": True, "role": role,
                          "draft": {"allies": [{"name": self.champs.name(a.champion_id), "position": a.position,
-                                               "hover": a.hover} for a in cs.allies],
-                                   "enemies": [self.champs.name(e) for e in cs.enemies],
-                                   "bans": [self.champs.name(b) for b in cs.bans]},
+                                               "hover": a.hover, "image": self._img(a.champion_id)}
+                                              for a in cs.allies],
+                                   "enemies": [{"name": self.champs.name(e), "image": self._img(e)} for e in cs.enemies],
+                                   "bans": [{"name": self.champs.name(b), "image": self._img(b)} for b in cs.bans]},
                          "picks": self.recommend(role, cs.allies, cs.enemies, cs.bans),
                          "updated": time.time()}
+
+    def _img(self, cid: int) -> str | None:
+        return self.champs.by_id.get(cid, {}).get("image")
 
     def save_draft(self, payload: dict) -> None:
         """Store what the companion on your PC sent (hosted mode)."""
@@ -234,6 +254,7 @@ def draft_from_payload(data: dict) -> lcu.ChampSelect:
 
 
 TIERS = ["S+", "S", "A", "B", "C", "D"]
+ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
 
 
 def _tier(adjusted_win_pct: float, pick_plus_ban_pct: float) -> str:

@@ -34,7 +34,7 @@ class Champions:
         for c in data["data"].values():
             cid = int(c["key"])
             self.by_id[cid] = {"id": cid, "name": c["name"], "slug": c["id"],
-                               "tags": c.get("tags", []),
+                               "tags": c.get("tags", []), "title": c.get("title", ""),
                                "image": f"{cdn}/champion/{c['image']['full']}"}
             self.by_name[_norm(c["name"])] = cid
             self.by_name[_norm(c["id"])] = cid

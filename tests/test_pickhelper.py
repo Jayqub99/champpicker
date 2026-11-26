@@ -297,7 +297,14 @@ class ServerTests(unittest.TestCase):
             tiers = get("/api/tierlist?role=BOTTOM")
             self.assertEqual({t["name"] for t in tiers}, {"Jinx", "Caitlyn", "Ezreal", "Draven"})
             self.assertTrue(all(t["tier"] in ("S+", "S", "A", "B", "C", "D") for t in tiers))
+            self.assertTrue(all(t["role"] == "BOTTOM" and len(t["counters"]) <= 3 for t in tiers))
+            self.assertTrue(any(t["counters"] for t in tiers))
+            every = get("/api/tierlist?role=ALL")
+            self.assertGreater(len(every), len(tiers))
+            self.assertTrue({"TOP", "BOTTOM"} <= {t["role"] for t in every})
             page = get("/api/champion?champion=Jinx")
+            self.assertEqual(page["stats"]["tier"] in ("S+", "S", "A", "B", "C", "D"), True)
+            self.assertIn("title", page["champion"])
             self.assertEqual(page["role"], "BOTTOM")
             self.assertEqual(page["duo_role"], "UTILITY")
             self.assertTrue(page["build"]["core"])
@@ -382,7 +389,7 @@ class HostedTests(unittest.TestCase):
         live = json.loads(self.call("/api/live", headers=auth)[2])
         self.assertTrue(live["in_champ_select"])
         self.assertEqual(live["role"], "BOTTOM")
-        self.assertEqual(live["draft"]["enemies"], ["Draven", "Nautilus"])
+        self.assertEqual([e["name"] for e in live["draft"]["enemies"]], ["Draven", "Nautilus"])
         self.assertEqual(live["picks"][0]["name"], "Jinx")
         companion.send(self.base, "hunter2", companion.payload_from(None))
         self.assertFalse(json.loads(self.call("/api/live", headers=auth)[2])["in_champ_select"])
@@ -499,7 +506,11 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual([g["win"] for g in d["games"]], [True, False])
         self.assertEqual(d["games"][0]["champion"], "Jinx")
         self.assertEqual(d["games"][0]["kda"], "5/2/7")
-        self.assertEqual(d["champions"], [{"champion": "Jinx", "games": 2, "wins": 1}])
+        self.assertEqual([{k: c[k] for k in ("champion", "games", "wins")} for c in d["champions"]],
+                         [{"champion": "Jinx", "games": 2, "wins": 1}])
+        g = d["games"][0]
+        self.assertEqual(len(g["teams"]), 2)
+        self.assertIn("kda_ratio", g)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0], 2)
 
 

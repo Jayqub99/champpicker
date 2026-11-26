@@ -107,6 +107,23 @@ class Stats:
         """All same-lane matchups for one champion (the counters page)."""
         return self.partners(cid, pos, pos, same_team=False, min_games=min_games)
 
+    def role_matchups(self, pos: str, min_games: int = 8) -> dict[int, list[dict]]:
+        """Every same-lane matchup in one role, in a single query (tier list counters)."""
+        if not self.patches:
+            return {}
+        clause, args = self._patch_clause()
+        q = f"""SELECT a.champion_id c, b.champion_id o, COUNT(*) n, SUM(a.win) w
+                FROM participants a
+                JOIN participants b ON a.match_id = b.match_id AND a.team_id <> b.team_id
+                                    AND b.position = a.position
+                JOIN matches m ON m.match_id = a.match_id
+                WHERE {clause} AND a.position = ?
+                GROUP BY a.champion_id, b.champion_id HAVING COUNT(*) >= ?"""
+        out: dict[int, list[dict]] = {}
+        for r in self.conn.execute(q, list(args) + [pos, min_games]):
+            out.setdefault(r["c"], []).append({"o": r["o"], "n": r["n"], "w": r["w"]})
+        return out
+
     def partners(self, cid: int, pos: str, other_pos: str, same_team: bool,
                  min_games: int = 10) -> list[dict]:
         """Results with (duos) or against (counters) each champion in `other_pos`."""

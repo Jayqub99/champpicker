@@ -132,6 +132,9 @@ class RiotClient:
                 "MASTER": "masterleagues"}[tier]
         return self.get(f"/lol/league/v4/{name}/by-queue/RANKED_SOLO_5x5").get("entries", [])
 
+    def summoner_by_puuid(self, puuid: str) -> dict:
+        return self.get(f"/lol/summoner/v4/summoners/by-puuid/{puuid}")
+
     def summoner(self, summoner_id: str) -> dict:
         return self.get(f"/lol/summoner/v4/summoners/{summoner_id}")
 
