@@ -23,6 +23,8 @@ Design notes: [League best-pick helper: design](https://claude.ai/artifact/C3GVs
 Clone this repo, then from its folder:
 
 ```powershell
+git clone https://github.com/Jayqub99/champpicker
+cd champpicker
 copy config.example.json config.json
 notepad config.json            # set riot_id, e.g. "Name#NA1"
 $env:RIOT_API_KEY = "RGAPI-..." # or put "api_key" in config.json (it's git-ignored)
