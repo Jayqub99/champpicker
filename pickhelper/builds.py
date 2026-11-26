@@ -68,6 +68,7 @@ def champion_build(conn: Database, patches: list[str], cid: int, pos: str,
 
     pages, spells, cores, boots, starts, orders = {}, {}, {}, {}, {}, {}
     item_seen, skill_orders = {}, []
+    later = [{}, {}, {}]  # 4th, 5th and 6th legendary bought (needs timelines)
     for r in rows:
         win = r["win"]
         if r["runes"]:
@@ -87,9 +88,11 @@ def champion_build(conn: Database, patches: list[str], cid: int, pos: str,
         if r["start_items"]:
             _add(starts, tuple(sorted(_split(r["start_items"]))), win)
         order = _split(r["item_order"])
-        order = [i for i in order if game.item(i)["legendary"]][:3]
-        if len(order) == 3:
-            _add(orders, tuple(order), win)
+        order = [i for i in order if game.item(i)["legendary"]]
+        if len(order) >= 3:
+            _add(orders, tuple(order[:3]), win)
+        for slot, i in enumerate(order[3:6]):
+            _add(later[slot], i, win)
         if r["skill_order"]:
             skill_orders.append(r["skill_order"])
 
@@ -101,7 +104,8 @@ def champion_build(conn: Database, patches: list[str], cid: int, pos: str,
         out["runes"] = {**_stat(n, w, total),
                         "styles": [game.rune(s) for s in _split(styles)],
                         "runes": [game.rune(x) for x in _split(runes)],
-                        "shards": [game.rune(x) for x in _split(shards)]}
+                        "shards": [game.rune(x) for x in _split(shards)],
+                        "trees": [game.tree(st) for st in _split(styles)]}
 
     pick = _best(spells, base, total)
     if pick:
@@ -130,6 +134,13 @@ def champion_build(conn: Database, patches: list[str], cid: int, pos: str,
 
     popular = sorted(item_seen.items(), key=lambda kv: -kv[1][0])[:8]
     out["items"] = [{**_stat(n, w, total), "item": game.item(i)} for i, (n, w) in popular]
+
+    for slot, name in enumerate(("fourth", "fifth", "sixth")):
+        seen = later[slot]
+        slot_total = sum(n for n, _ in seen.values())
+        top = sorted(seen.items(), key=lambda kv: -kv[1][0])[:3]
+        if top and top[0][1][0] >= 3:
+            out[name] = [{**_stat(n, w, slot_total), "item": game.item(i)} for i, (n, w) in top]
 
     if skill_orders:
         first = Counter(o[:15] for o in skill_orders if len(o) >= 15).most_common(1)

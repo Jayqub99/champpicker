@@ -44,14 +44,23 @@ def seed_players(client: RiotClient, conn: Database, tiers: list[str],
     return added
 
 
+RECENT_DAYS = 14  # about one patch back
+
+
 def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
-          matches_per_player: int = 10, log=print, timelines: bool = False,
+          matches_per_player: int = 10, log=print, timelines: bool | int = False,
           is_completed_item=lambda item_id: True) -> int:
     """Fetch new matches until the request budget runs out. Returns matches stored.
 
-    With timelines=True each match costs a second request, which adds skill
-    order, starting items and build order but halves how many games you get.
+    Timelines add skill order, starting items and build order, at one extra
+    request per match. timelines=True fetches one for every match; a number N
+    fetches one for every Nth match, which is enough to sample orders while
+    keeping most of the budget for more games.
     """
+    every = 0 if not timelines else 1 if timelines is True else max(1, int(timelines))
+
+    def want_timeline() -> bool:
+        return bool(every) and stored % every == 0
     start_requests = client.requests_made
     stored = 0
 
@@ -67,7 +76,7 @@ def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
             match = client.match(mid)
             if db.store_match(conn, match):
                 stored += 1
-                if timelines:
+                if want_timeline():
                     db.store_timeline(conn, match, client.timeline(mid), is_completed_item)
             else:
                 conn.execute("DELETE FROM matches WHERE match_id = ?", (mid,))
@@ -85,7 +94,8 @@ def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
         if client.requests_made - start_requests >= max_requests:
             break
         try:
-            ids = client.match_ids(puuid, count=matches_per_player)
+            # Only recent games: older ones are on past patches and never reach the stats.
+            ids = client.match_ids(puuid, count=matches_per_player, since=time.time() - RECENT_DAYS * 86400)
         except RiotError as e:
             log(f"  skipped a player: {e}")
             continue
@@ -99,7 +109,7 @@ def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
                 match = client.match(mid)
                 if db.store_match(conn, match):
                     stored += 1
-                    if timelines:
+                    if want_timeline():
                         db.store_timeline(conn, match, client.timeline(mid), is_completed_item)
             except RiotError as e:
                 log(f"  skipped {mid}: {e}")

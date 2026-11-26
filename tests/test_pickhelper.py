@@ -470,7 +470,7 @@ class FakeRiot:
         return [{"queueType": "RANKED_SOLO_5x5", "tier": "EMERALD", "rank": "II", "leaguePoints": 40,
                  "wins": 30, "losses": 25}]
 
-    def match_ids(self, puuid, count=10, queue=None, start=0):
+    def match_ids(self, puuid, count=10, queue=None, start=0, since=None):
         return ["P1", "P2"]
 
     def match(self, mid):
@@ -489,7 +489,7 @@ class CrawlTests(unittest.TestCase):
                 self.requests_made += 1
                 return fake_match(mid, ([7, 9, 8, 1, 5], [10, 12, 11, 4, 13]), True)
 
-            def match_ids(self, puuid, count=10, queue=None, start=0):
+            def match_ids(self, puuid, count=10, queue=None, start=0, since=None):
                 return []
         conn = fresh_db()
         conn.execute("INSERT INTO matches (match_id, patch, has_builds) VALUES ('OLD1', '15.23', 0)")

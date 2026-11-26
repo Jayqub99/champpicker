@@ -138,10 +138,13 @@ class RiotClient:
     def summoner(self, summoner_id: str) -> dict:
         return self.get(f"/lol/summoner/v4/summoners/{summoner_id}")
 
-    def match_ids(self, puuid: str, count: int = 20, start: int = 0, queue: int | None = 420) -> list[str]:
+    def match_ids(self, puuid: str, count: int = 20, start: int = 0, queue: int | None = 420,
+                  since: int | None = None) -> list[str]:
         params = {"start": start, "count": count}
         if queue:
             params["queue"] = queue
+        if since:
+            params["startTime"] = int(since)  # epoch seconds: only games after this
         return self.get(f"/lol/match/v5/matches/by-puuid/{puuid}/ids", regional=True, params=params)
 
     def match(self, match_id: str) -> dict:

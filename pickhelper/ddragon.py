@@ -60,7 +60,12 @@ class Champions:
                                 "image": f"{cdn}/spell/{s['image']['full']}"}
 
         self.runes: dict[int, dict] = {}
+        self.rune_trees: dict[int, list[list[int]]] = {}  # style -> rows of rune ids
+        self._abilities: dict[str, dict | None] = {}
+        self._cdn = cdn
         for style in runes or []:
+            self.rune_trees[style["id"]] = [[r["id"] for r in slot.get("runes", [])]
+                                            for slot in style.get("slots", [])]
             self.runes[style["id"]] = {"id": style["id"], "name": style["name"],
                                        "image": f"{BASE}/cdn/img/{style['icon']}"}
             for slot in style.get("slots", []):
@@ -69,6 +74,29 @@ class Champions:
                                            "image": f"{BASE}/cdn/img/{r['icon']}"}
         for sid, name in SHARDS.items():
             self.runes.setdefault(sid, {"id": sid, "name": name, "image": None})
+
+    def tree(self, style_id: int) -> list[list[dict]]:
+        """Every rune in a rune tree, row by row (the first row holds the keystones)."""
+        return [[self.rune(r) for r in row] for row in self.rune_trees.get(style_id, [])]
+
+    def abilities(self, cid: int, fetch=None) -> dict | None:
+        """Passive and Q/W/E/R names and icons, fetched once per champion."""
+        slug = self.by_id.get(cid, {}).get("slug")
+        if not slug:
+            return None
+        if slug not in self._abilities:
+            try:
+                with (fetch or _get)(f"{BASE}/cdn/{self.version}/data/en_US/champion/{slug}.json", timeout=10) as r:
+                    data = json.loads(r.read())["data"][slug]
+                spells = data.get("spells", [])
+                self._abilities[slug] = {
+                    "passive": {"key": "P", "name": data["passive"]["name"],
+                                "image": f"{self._cdn}/passive/{data['passive']['image']['full']}"},
+                    **{k: {"key": k, "name": sp["name"], "image": f"{self._cdn}/spell/{sp['image']['full']}"}
+                       for k, sp in zip("QWER", spells)}}
+            except (OSError, KeyError, ValueError):
+                return None  # not cached, so the next page view tries again
+        return self._abilities[slug]
 
     def name(self, cid: int) -> str:
         return self.by_id.get(cid, {}).get("name", f"#{cid}")

@@ -40,4 +40,4 @@ jobs:
       - name: Ladder players (first run only)
         run: python -m pickhelper seed --if-empty
       - name: Matches
-        run: python -m pickhelper crawl --max-requests "$MAX_REQUESTS"
+        run: python -m pickhelper crawl --max-requests "$MAX_REQUESTS" --timeline-every 3

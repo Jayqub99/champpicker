@@ -147,8 +147,13 @@ class App:
             if n:
                 adj = 100 * engine.shrunk(w, n, 0.5, engine.K_BASE)
                 pick = 100 * n / (self.stats.match_count or 1)
+                ranked = sorted(((engine.shrunk(w2, n2, 0.5, engine.K_BASE), c2)
+                                 for (c2, p2), (n2, w2) in self.stats.champ_role.items()
+                                 if p2 == role and n2 >= 30), reverse=True)
+                place = next((i + 1 for i, (_, c2) in enumerate(ranked) if c2 == cid), None)
                 page["stats"] = {"games": n, "win_pct": round(100 * w / n, 1), "pick_pct": round(pick, 1),
-                                 "ban_pct": page["ban_pct"], "tier": _tier(adj, pick + page["ban_pct"])}
+                                 "ban_pct": page["ban_pct"], "tier": _tier(adj, pick + page["ban_pct"]),
+                                 "rank": place, "of": len(ranked)}
             partner = engine.DUO.get(role)
             if partner:
                 n, w = self.stats.champ_role.get((cid, role), (0, 0))
@@ -162,6 +167,7 @@ class App:
                 page["duos"] = sorted(duos, key=lambda x: -x["adjusted_win_pct"])[:8]
                 page["duo_role"] = partner
             page["matchups"] = self.counters(cid, role)
+        page["abilities"] = self.champs.abilities(cid)
         return page
 
     def player(self, riot_id: str) -> dict:
