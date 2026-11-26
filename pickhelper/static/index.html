@@ -542,7 +542,7 @@ function runePanel(r) {
         <div class="shards">${(r.shards || []).map(x => `<span class="chip">${esc(x.name)}</span>`).join("")}</div></div></div></div>`;
 }
 function skillPanel(sk, ab) {
-  if (!sk) return `<div class="panel"><div class="ptitle">Skill priority</div><p class="muted small" style="margin:0">Skill order needs game timelines. The nightly crawl now fetches them, so this fills in after the next run.</p></div>`;
+  if (!sk) return `<div class="panel"><div class="ptitle">Skill priority</div><p class="muted small" style="margin:0">Skill order needs game timelines. The crawl now fetches them, so this fills in over the next few runs.</p></div>`;
   ab = ab || {};
   const pri = (sk.priority || "").split(">").map(x => x.trim()).filter(Boolean);
   const order = sk.order || "";

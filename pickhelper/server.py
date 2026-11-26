@@ -106,7 +106,8 @@ class App:
         rows.sort(key=lambda x: x["adjusted_win_pct"])
         return {"champion": self.champs.name(cid), "role": role, "games": n,
                 "win_pct": round(100 * w / n, 1) if n else None,
-                "worst": rows[:10], "best": list(reversed(rows[-10:]))}
+                "worst": [r for r in rows if r["adjusted_win_pct"] < 100 * base][:10],
+                "best": [r for r in reversed(rows) if r["adjusted_win_pct"] >= 100 * base][:10]}
 
     def tierlist(self, role: str, min_games: int = 30) -> list[dict]:
         if role == "ALL":
