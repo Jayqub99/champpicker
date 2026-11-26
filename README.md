@@ -81,21 +81,22 @@ python -m pickhelper recommend --enemies "Draven,Nautilus" --allies "Thresh"
 
 ## Host it on Vercel
 
-The same code runs as a password-protected site on Vercel, with the data in a free Neon Postgres database and a nightly GitHub job doing the crawl. Your PC only runs the small companion while you play, so live picks still work.
+The same code runs as a password-protected site on Vercel, with the data in a Supabase Postgres database and a nightly GitHub job doing the crawl. Your PC only runs the small companion while you play, so live picks still work.
 
 One-time setup:
 
 1. **Riot key that doesn't expire daily:** in the Riot Developer Portal, register Champ Picker as a personal product. The free development key works too, but you'd have to update it every day.
 2. **Vercel project:** in your Vercel account, Add New, Project, import `champpicker`. Leave the framework as Other and deploy.
-3. **Database:** in the Vercel project, Storage, create a Neon Postgres database and connect it to the project. That adds `DATABASE_URL` for you.
+3. **Database:** in Supabase, open the project, press **Connect**, and copy the **Session pooler** connection string (port 5432). Replace `[YOUR-PASSWORD]` in it with the project's database password. Don't use the Transaction pooler (port 6543): the app refuses it, because it can't keep the app's tables in their own schema.
 4. **Vercel settings:** Settings, Environment Variables, add:
+   - `DATABASE_URL`: the Session pooler string from step 3.
    - `SITE_PASSWORD`: any password you'll remember. The site refuses to run without one.
    - `RIOT_API_KEY`: your Riot key (for profile lookups).
    - `RIOT_ID`: your Riot ID, e.g. `Name#NA1`.
    - `MAIN_ROLE`: `BOTTOM` (or your role).
 
    Then redeploy (Deployments, the latest one, Redeploy).
-5. **Nightly crawl:** in GitHub, the repo's Settings, Secrets and variables, Actions, add `DATABASE_URL` (copy it from the Vercel project's environment variables), `RIOT_API_KEY` and `RIOT_ID`. Then Actions, Nightly crawl, Run workflow for the first fill. After that it runs every night at 2 AM Eastern, spending 8,000 requests (about 2 hours 40 minutes).
+5. **Nightly crawl:** in GitHub, the repo's Settings, Secrets and variables, Actions, add `DATABASE_URL` (the same Session pooler string), `RIOT_API_KEY` and `RIOT_ID`. Then Actions, Nightly crawl, Run workflow for the first fill. After that it runs every night at 2 AM Eastern, spending 8,000 requests (about 2 hours 40 minutes).
 6. **Companion on your PC:** in `config.json`, set `site_url` to your Vercel address (`https://...vercel.app`) and `site_password` to the same password. When you play, run:
 
    ```powershell
@@ -103,6 +104,8 @@ One-time setup:
    ```
 
    It reads champ select (never your teammates' names) and sends it to the site. Close it when you're done.
+
+All tables go in their own `champpicker` schema, not `public`, so the database can be shared with another app without touching its tables, and Supabase's public REST API doesn't expose them. Set `DB_SCHEMA` to use another name. The nightly crawl also keeps a free Supabase project from pausing for inactivity.
 
 Keep the repo public if you want the nightly crawl free: GitHub Actions is free without limit on public repos, while private repos get a monthly allowance the nightly crawl would use up. No keys or passwords are in the code; they live in Vercel and GitHub secrets.
 

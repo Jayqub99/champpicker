@@ -503,5 +503,58 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0], 2)
 
 
+class SchemaTests(unittest.TestCase):
+    """Champ Picker shares a Supabase project with southernjits, so its tables
+    must stay in their own schema and the transaction pooler must be refused."""
+
+    def test_refuses_transaction_pooler(self):
+        for url in ("postgresql://u:p@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
+                    "postgresql://u:p@db.example.com:5432/postgres?pgbouncer=true"):
+            with self.assertRaises(RuntimeError) as cm:
+                db.connect(url)
+            self.assertIn("Session pooler", str(cm.exception))
+
+    @unittest.skipUnless(PG_URL, "needs TEST_DATABASE_URL")
+    def test_tables_go_in_own_schema(self):
+        import psycopg
+        schema = f"cp{os.getpid()}"
+        with psycopg.connect(PG_URL, autocommit=True) as c:
+            c.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        old = os.environ.get("DB_SCHEMA")
+        os.environ["DB_SCHEMA"] = schema
+        try:
+            conn = db.connect(PG_URL)
+            conn.execute("INSERT INTO players (puuid) VALUES (?)", ("x",))
+            conn.commit()
+            conn.close()
+            with psycopg.connect(PG_URL) as c:
+                tables = {r[0] for r in c.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = %s", (schema,))}
+                self.assertIn("players", tables)
+                self.assertIn("matches", tables)
+                in_public = c.execute("SELECT count(*) FROM information_schema.tables "
+                                      "WHERE table_schema = 'public' AND table_name = 'players'").fetchone()[0]
+                self.assertEqual(in_public, 0)
+        finally:
+            if old is None:
+                os.environ.pop("DB_SCHEMA", None)
+            else:
+                os.environ["DB_SCHEMA"] = old
+            with psycopg.connect(PG_URL, autocommit=True) as c:
+                c.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+    def test_rejects_bad_schema_name(self):
+        old = os.environ.get("DB_SCHEMA")
+        os.environ["DB_SCHEMA"] = "x; drop table y"
+        try:
+            with self.assertRaises(ValueError):
+                db.connect("postgresql://u:p@127.0.0.1:1/none?connect_timeout=1")
+        finally:
+            if old is None:
+                os.environ.pop("DB_SCHEMA", None)
+            else:
+                os.environ["DB_SCHEMA"] = old
+
+
 if __name__ == "__main__":
     unittest.main()

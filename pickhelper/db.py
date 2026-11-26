@@ -6,6 +6,8 @@ nightly GitHub crawl use. All SQL here is written to run on both.
 """
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -137,12 +139,43 @@ def _sqlite_row_factory(cursor, values):
     return Row(values, {d[0]: i for i, d in enumerate(cursor.description)})
 
 
+DEFAULT_SCHEMA = "champpicker"
+
+
+def _check_pooler(url: str) -> None:
+    """Transaction-mode poolers (Supabase port 6543, pgbouncer) drop session settings
+    between statements, so our separate schema could silently fall back to `public`
+    and mix with other apps' tables. Refuse them."""
+    from urllib.parse import parse_qs, urlparse
+    parsed = urlparse(url)
+    if parsed.port == 6543 or parse_qs(parsed.query).get("pgbouncer") == ["true"]:
+        raise RuntimeError("That's a transaction-pooler connection string (port 6543). "
+                           "Use Supabase's Session pooler or direct connection string (port 5432).")
+
+
 def connect(target: Path | str) -> Database:
-    """Open a SQLite file (a path or ":memory:") or a Postgres URL."""
+    """Open a SQLite file (a path or ":memory:") or a Postgres URL.
+
+    On Postgres every table lives in its own schema (DB_SCHEMA, default
+    "champpicker"), so sharing a database with another app, such as a Supabase
+    project, can never touch that app's tables.
+    """
     target = str(target)
     if target.startswith(("postgres://", "postgresql://")):
         import psycopg  # only needed for the hosted setup
-        raw = psycopg.connect(target, row_factory=_pg_row_factory)
+        _check_pooler(target)
+        schema = os.environ.get("DB_SCHEMA", DEFAULT_SCHEMA)
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,40}", schema):
+            raise ValueError(f"Bad DB_SCHEMA {schema!r}: use lowercase letters, digits and _")
+        raw = psycopg.connect(target, row_factory=_pg_row_factory, prepare_threshold=None)
+        if "search_path" not in target:   # tests pick their own schema in the URL
+            raw.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            raw.execute(f"SET search_path TO {schema}")
+            current = raw.execute("SELECT current_schema()").fetchone()[0]
+            if current != schema:
+                raw.close()
+                raise RuntimeError(f"Database didn't switch to schema {schema!r}; refusing to continue.")
+            raw.commit()
         conn = Database(raw, "postgres")
     else:
         raw = sqlite3.connect(target, check_same_thread=False)
