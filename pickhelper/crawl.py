@@ -88,7 +88,7 @@ def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
     conn.commit()
 
     players = [r["puuid"] for r in conn.execute(
-        "SELECT puuid FROM players ORDER BY last_crawled ASC LIMIT 500")]
+        "SELECT puuid FROM players ORDER BY last_crawled ASC LIMIT 5000")]
     random.shuffle(players)
     for puuid in players:
         if client.requests_made - start_requests >= max_requests:
@@ -109,6 +109,7 @@ def crawl(client: RiotClient, conn: Database, max_requests: int = 1000,
                 match = client.match(mid)
                 if db.store_match(conn, match):
                     stored += 1
+                    db.add_players(conn, match)
                     if want_timeline():
                         db.store_timeline(conn, match, client.timeline(mid), is_completed_item)
             except RiotError as e:

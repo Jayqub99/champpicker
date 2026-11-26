@@ -30,6 +30,9 @@ def main(argv=None):
                    help="also fetch skill order, starting items and build order (half as many games)")
     c.add_argument("--timeline-every", type=int, default=0, metavar="N",
                    help="fetch timelines for every Nth match only (cheaper than --timelines)")
+    pr = sub.add_parser("prune", help="drop old-patch games so the database stays small")
+    pr.add_argument("--keep-patches", type=int, default=2)
+    pr.add_argument("--max-matches", type=int, default=55000)
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8777)
     v.add_argument("--no-watch", action="store_true", help="don't watch the League client")
@@ -48,6 +51,11 @@ def main(argv=None):
         companion.run(cfg.site_url, cfg.site_password)
         return
     conn = db.connect(cfg.db_target)
+
+    if args.cmd == "prune":
+        r = db.prune(conn, args.keep_patches, args.max_matches)
+        print(f"Dropped {r['old_patches']} old-patch games and {r['over_limit']} over the limit; {r['left']} left.")
+        return
 
     if args.cmd in ("sync-me", "seed", "crawl"):
         try:

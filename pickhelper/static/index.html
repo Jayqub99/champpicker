@@ -326,6 +326,7 @@
     <a href="#/live" data-r="live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/></svg>Live pick</a>
     <a href="#/tier-list" data-r="tier-list"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h11M4 18h6"/></svg>Tier list</a>
     <a href="#/champions" data-r="champions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>Champions</a>
+    <a href="#/me" data-r="me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>My stats</a>
     <a href="#/profile" data-r="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Profile</a>
     <a href="#/builder" data-r="builder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg>Pick builder</a>
     <div class="sep"></div>
@@ -444,6 +445,7 @@ function route() {
   if (page === "champion") return championPage(decodeURIComponent(parts[1] || ""), params.get("role"));
   if (page === "profile") return profilePage(decodeURIComponent(parts.slice(1).join("/")));
   if (page === "builder") return builder();
+  if (page === "me") return myStats();
   return livePage();
 }
 
@@ -623,6 +625,7 @@ async function championPage(name, role) {
 const TIER_COLOR = { Iron:"#8c7b72", Bronze:"#b07a55", Silver:"#a8b5c2", Gold:"#e3b04b", Platinum:"#3fbfb0",
   Emerald:"#2bc47a", Diamond:"#6f8cff", Master:"#c06bff", Grandmaster:"#ff5a5f", Challenger:"#ffd36a" };
 async function profilePage(id) {
+  if (!id && STATUS.riot_id) return go("#/profile/" + encodeURIComponent(STATUS.riot_id));
   if (!id) {
     VIEW().innerHTML = `<h1 class="page">Profile</h1><p class="lede">Look up any player by Riot ID.</p>
       <div class="panel" style="display:flex;gap:10px;max-width:520px"><input class="field" id="p-id" placeholder="Name#NA1"><button class="btn" id="p-go">Look up</button></div>`;
@@ -676,6 +679,46 @@ async function profilePage(id) {
       <div><div class="panel"><div class="ptitle">Ranked</div>${ranks}</div>
         <div class="panel"><div class="ptitle">Recent champions</div>${champs || '<div class="muted">No games yet</div>'}</div></div>
       <div>${games || '<div class="panel empty">No recent games</div>'}</div></div>`;
+}
+
+// ============================================================ my stats
+async function myStats() {
+  VIEW().innerHTML = '<div class="loading">Loading your games…</div>';
+  const d = await api("/api/me");
+  const s = d.summary;
+  if (!s) {
+    VIEW().innerHTML = `<h1 class="page">My stats</h1><div class="panel empty">None of your games are saved yet. The crawl syncs your ranked games at the start of each run.</div>`;
+    return;
+  }
+  const head = `<div class="phead"><div class="pic">${img(champ(d.champions[0] && d.champions[0].name), 88)}</div>
+      <div><h1>${esc((d.riot_id || "").split("#")[0])} <span>#${esc((d.riot_id || "").split("#")[1] || "")}</span></h1>
+      <div class="muted small" style="margin-top:4px">Your last ${num(s.games)} ranked games · main role ${esc(roleName(d.role))}</div></div></div>`;
+  const strip = `<div class="statstrip">
+      <div><div class="v ${wrClass(s.win_pct)}">${pct(s.win_pct)}</div><div class="k">Win rate</div></div>
+      <div><div class="v">${s.wins}<span class="muted">W</span> ${s.games - s.wins}<span class="muted">L</span></div><div class="k">Record</div></div>
+      <div><div class="v">${s.kda}</div><div class="k">KDA</div></div>
+      <div><div class="v">${s.kills} / <span style="color:var(--loss)">${s.deaths}</span> / ${s.assists}</div><div class="k">Avg K / D / A</div></div>
+      <div><div class="v">${s.cs_per_min ?? "–"}</div><div class="k">CS per min</div></div>
+      <div><div class="v">${d.recent.filter(x => x.win).length}-${d.recent.filter(x => !x.win).length}</div><div class="k">Last ${d.recent.length}</div></div></div>`;
+  const recent = `<div class="panel"><div class="ptitle">Recent form</div><div class="icons" style="gap:6px">${d.recent.map(g =>
+      `<div style="border-bottom:3px solid ${g.win ? "var(--win)" : "var(--loss)"};padding-bottom:3px">${img(g, 32)}</div>`).join("")}</div></div>`;
+  const champs = `<div class="tablewrap" style="margin-bottom:12px"><table class="table"><thead><tr>
+      <th class="l">Champion</th><th>Role</th><th>Games</th><th>Win rate</th><th class="hide-sm">vs. average</th><th>KDA</th><th class="hide-sm">CS / min</th><th class="hide-sm">Mastery</th></tr></thead>
+      <tbody>${d.champions.map(c => { const diff = c.global_win_pct != null && c.win_pct != null ? +(c.win_pct - c.global_win_pct).toFixed(1) : null;
+        return `<tr class="click" data-href="${esc(champLink(c.name, c.role))}"><td class="l"><div class="champcell">${img(c, 32)}<b>${esc(c.name)}</b></div></td>
+        <td class="roleic">${roleIcon(c.role)}</td><td>${c.games}</td><td class="${wrClass(c.win_pct)}">${pct(c.win_pct)}</td>
+        <td class="hide-sm" style="color:${diff == null ? "var(--muted)" : diff >= 0 ? "var(--win)" : "var(--loss)"}">${diff == null ? "–" : (diff >= 0 ? "+" : "") + diff + "%"}</td>
+        <td>${c.kda}</td><td class="hide-sm">${c.cs_per_min ?? "–"}</td><td class="hide-sm muted">${num(c.mastery)}</td></tr>`; }).join("")}</tbody></table></div>`;
+  const opp = `<div class="panel"><div class="ptitle">Your ${esc(roleName(d.role))} lane matchups <span class="sub">opponents you've faced twice or more, hardest first</span></div>
+      ${d.matchups.length ? d.matchups.map(o => `<a class="mrow" href="${esc(champLink(o.name, d.role))}">${img(o, 34)}<b>${esc(o.name)}</b>
+        <span class="wr ${wrClass(o.win_pct)}">${pct(o.win_pct)}</span><span class="g">${o.wins}W ${o.games - o.wins}L</span></a>`).join("")
+        : '<div class="muted small">Not enough repeat opponents yet.</div>'}</div>`;
+  const picks = `<div class="panel"><div class="ptitle">Your personal ${esc(roleName(d.role))} tier list <span class="sub">global data blended with your own results</span></div>
+      ${(d.picks || []).map((p, i) => `<a class="mrow" href="${esc(champLink(p.name, d.role))}"><span>${img(p.image ? p : champ(p.name), 34)}</span>
+        <b>${i + 1}. ${esc(p.name)}${p.low_data ? ' <span class="tag">Little data</span>' : ""}</b>
+        <span class="wr ${wrClass(p.win_pct)}">${pct(p.win_pct)}</span><span class="g">expected win</span></a>`).join("") || '<div class="muted small">No pool yet.</div>'}</div>`;
+  VIEW().innerHTML = head + strip + recent + champs + `<div class="grid2">${picks}${opp}</div>`;
+  VIEW().querySelectorAll("tr.click").forEach(tr => tr.onclick = () => go(tr.dataset.href));
 }
 
 // ============================================================ recommendations

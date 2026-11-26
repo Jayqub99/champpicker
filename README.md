@@ -96,7 +96,7 @@ One-time setup:
    - `MAIN_ROLE`: `BOTTOM` (or your role).
 
    Then redeploy (Deployments, the latest one, Redeploy).
-5. **Nightly crawl:** in GitHub, the repo's Settings, Secrets and variables, Actions, add `DATABASE_URL` (the same Session pooler string), `RIOT_API_KEY` and `RIOT_ID`. Then Actions, Nightly crawl, Run workflow for the first fill. After that it runs every night at 2 AM Eastern, spending 8,000 requests (about 2 hours 40 minutes).
+5. **Nightly crawl:** in GitHub, the repo's Settings, Secrets and variables, Actions, add `DATABASE_URL` (the same Session pooler string), `RIOT_API_KEY` and `RIOT_ID`. Then Actions, Nightly crawl, Run workflow for the first fill. After that it runs every 6 hours, spending about 14,000 requests each time (just under 5 hours at the key's limit). It only fetches games from the last 14 days, adds a timeline for every third game (skill and item order), and drops games from older patches first so the free Supabase database stays under its size limit. Your own games are always kept.
 6. **Companion on your PC:** in `config.json`, set `site_url` to your Vercel address (`https://...vercel.app`) and `site_password` to the same password. When you play, run:
 
    ```powershell

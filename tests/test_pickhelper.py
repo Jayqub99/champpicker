@@ -282,6 +282,10 @@ class ServerTests(unittest.TestCase):
             type(cfg).db_path = property(lambda self: Path(target))
         conn = db.connect(target)
         build_db(conn, n=800)
+        for r in conn.execute("SELECT match_id, win FROM participants WHERE champion_id = 1 AND position = 'BOTTOM' "
+                              "ORDER BY match_id LIMIT 6").fetchall():
+            conn.execute("INSERT INTO my_games VALUES (?,?,?,?,?)", (r[0], 1, "BOTTOM", r[1], 0))
+        conn.commit()
         conn.close()
         app = server.App(cfg, champions(), watching=True)
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(lambda: app))
@@ -290,6 +294,11 @@ class ServerTests(unittest.TestCase):
         get = lambda p: json.loads(urllib.request.urlopen(base + p).read())
         try:
             self.assertEqual(get("/api/status")["matches"], 800)
+            me = get("/api/me")
+            self.assertEqual(me["summary"]["games"], 6)
+            self.assertEqual(me["champions"][0]["name"], "Jinx")
+            self.assertEqual(me["champions"][0]["games"], 6)
+            self.assertTrue(me["picks"])
             recs = get("/api/recommend?enemies=Draven&allies=Thresh")
             self.assertEqual(recs[0]["name"], "Jinx")
             counters = get("/api/counters?champion=Draven&role=BOTTOM")
@@ -512,6 +521,22 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(len(g["teams"]), 2)
         self.assertIn("kda_ratio", g)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0], 2)
+
+
+class PruneTests(unittest.TestCase):
+    def test_drops_old_patches_and_keeps_mine(self):
+        conn = fresh_db()
+        for i, patch in enumerate(["16.21", "16.22", "16.23", "16.23"]):
+            conn.execute("INSERT INTO matches (match_id, patch, game_start) VALUES (?,?,?)", (f"m{i}", patch, i))
+            conn.execute("INSERT INTO participants (match_id, team_id, champion_id, position, win) VALUES (?,100,1,'TOP',1)", (f"m{i}",))
+        conn.execute("INSERT INTO my_games VALUES ('m0', 1, 'TOP', 1, 0)")
+        conn.commit()
+        r = db.prune(conn, keep_patches=2, max_matches=2)
+        left = {x[0] for x in conn.execute("SELECT match_id FROM matches")}
+        self.assertIn("m0", left)            # your own game stays even on an old patch
+        self.assertNotIn("m1", left)         # over the limit, oldest goes first
+        self.assertEqual(left, {"m0", "m2", "m3"})
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0], 3)
 
 
 class SchemaTests(unittest.TestCase):

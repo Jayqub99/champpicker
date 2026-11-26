@@ -1,19 +1,21 @@
 name: Nightly crawl
 
-# Downloads new ranked matches into the hosted database every night.
+# Downloads new ranked matches into the hosted database, four times a day.
+# Each run spends about 5 hours at the key's speed limit (100 requests every
+# 2 minutes), leaving a little room for profile lookups on the site.
 # Needs these repository secrets (Settings > Secrets and variables > Actions):
-#   DATABASE_URL  - the Neon database connection string (same one Vercel uses)
+#   DATABASE_URL  - the Supabase Session pooler connection string (same one Vercel uses)
 #   RIOT_API_KEY  - your Riot key (a personal-product key; dev keys expire daily)
 #   RIOT_ID       - your Riot ID, e.g. Name#NA1 (for your own games and mastery)
 
 on:
   schedule:
-    - cron: "0 7 * * *"   # 2 AM Eastern (3 AM during daylight time)
+    - cron: "0 1,7,13,19 * * *"   # every 6 hours
   workflow_dispatch:
     inputs:
       max_requests:
         description: "Riot requests to spend (100 every 2 minutes)"
-        default: "8000"
+        default: "14000"
 
 concurrency:
   group: crawl
@@ -22,12 +24,12 @@ concurrency:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 350
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
       RIOT_ID: ${{ secrets.RIOT_ID }}
-      MAX_REQUESTS: ${{ github.event.inputs.max_requests || '8000' }}
+      MAX_REQUESTS: ${{ github.event.inputs.max_requests || '14000' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +39,9 @@ jobs:
       - name: Your mastery and recent games
         run: python -m pickhelper sync-me
         continue-on-error: true
+      - name: Drop old-patch games (keeps the free database under its size limit)
+        run: python -m pickhelper prune
       - name: Ladder players (first run only)
         run: python -m pickhelper seed --if-empty
       - name: Matches
-        run: python -m pickhelper crawl --max-requests "$MAX_REQUESTS" --timeline-every 3
+        run: python -m pickhelper crawl --max-requests "$MAX_REQUESTS" --per-player 20 --timeline-every 3

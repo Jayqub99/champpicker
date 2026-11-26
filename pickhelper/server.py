@@ -90,7 +90,8 @@ class App:
                     "my_games": self.conn.execute("SELECT COUNT(*) FROM my_games").fetchone()[0],
                     "role": role, "riot_id_set": bool(self.cfg.riot_id),
                     "pool": [self.champs.name(c) for c in self.pool(role)],
-                    "ddragon_version": self.champs.version, "hosted": not self.watching}
+                    "ddragon_version": self.champs.version, "hosted": not self.watching,
+                    "riot_id": self.cfg.riot_id}
 
     def counters(self, cid: int, role: str) -> dict:
         with self.lock:
@@ -169,6 +170,60 @@ class App:
             page["matchups"] = self.counters(cid, role)
         page["abilities"] = self.champs.abilities(cid)
         return page
+
+    def my_stats(self) -> dict:
+        """Your own games: champions, lane matchups and a personal pick order."""
+        with self.lock:
+            rows = self.conn.execute("""
+                SELECT g.match_id, g.champion_id, g.position, g.win, g.game_start,
+                       p.kills, p.deaths, p.assists, p.cs, m.duration, o.champion_id AS opp
+                FROM my_games g
+                LEFT JOIN participants p ON p.match_id = g.match_id AND p.champion_id = g.champion_id
+                                        AND p.position = g.position
+                LEFT JOIN matches m ON m.match_id = g.match_id
+                LEFT JOIN participants o ON o.match_id = g.match_id AND o.position = g.position
+                                        AND o.team_id <> p.team_id
+                ORDER BY g.game_start DESC""").fetchall()
+            mastery = {r["champion_id"]: r["points"] for r in
+                       self.conn.execute("SELECT champion_id, points FROM my_mastery")}
+            role = self.cfg.role
+
+            def agg(group):
+                n = len(group)
+                w = sum(r["win"] for r in group)
+                k = sum(r["kills"] or 0 for r in group)
+                d = sum(r["deaths"] or 0 for r in group)
+                a = sum(r["assists"] or 0 for r in group)
+                mins = sum((r["duration"] or 0) / 60 for r in group if r["cs"] is not None)
+                cs = sum(r["cs"] or 0 for r in group)
+                return {"games": n, "wins": w, "win_pct": round(100 * w / n, 1) if n else None,
+                        "kda": round((k + a) / max(1, d), 2), "kills": round(k / max(1, n), 1),
+                        "deaths": round(d / max(1, n), 1), "assists": round(a / max(1, n), 1),
+                        "cs_per_min": round(cs / mins, 1) if mins else None}
+
+            by_champ, by_role, by_opp = {}, {}, {}
+            for r in rows:
+                by_champ.setdefault((r["champion_id"], r["position"]), []).append(r)
+                by_role.setdefault(r["position"] or "?", []).append(r)
+                if r["opp"] and r["position"] == role:
+                    by_opp.setdefault(r["opp"], []).append(r)
+
+            champs = []
+            for (cid, pos), group in by_champ.items():
+                n, w = self.stats.champ_role.get((cid, pos), (0, 0))
+                champs.append({**agg(group), "name": self.champs.name(cid), "role": pos,
+                               "image": self._img(cid), "mastery": mastery.get(cid, 0),
+                               "global_win_pct": round(100 * w / n, 1) if n >= 30 else None})
+            champs.sort(key=lambda c: (-c["games"], -(c["win_pct"] or 0)))
+            opps = [{**agg(g), "name": self.champs.name(cid), "image": self._img(cid)}
+                    for cid, g in by_opp.items() if len(g) >= 2]
+            opps.sort(key=lambda o: (o["win_pct"], -o["games"]))
+            recent = [{"win": bool(r["win"]), "name": self.champs.name(r["champion_id"]),
+                       "image": self._img(r["champion_id"])} for r in rows[:20]]
+        return {"riot_id": self.cfg.riot_id, "role": role, "summary": agg(rows) if rows else None,
+                "roles": {k: len(v) for k, v in sorted(by_role.items(), key=lambda kv: -len(kv[1]))},
+                "champions": champs[:25], "matchups": opps, "recent": recent,
+                "picks": self.recommend(role, [], [], [], top=10)}
 
     def player(self, riot_id: str) -> dict:
         if not self.riot:
@@ -282,12 +337,15 @@ def session_token(password: str) -> str:
 
 LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Champ Picker</title>
-<style>body{margin:0;background:#0e1116;color:#e6e9ef;font:15px system-ui,sans-serif;display:grid;place-items:center;height:100vh}
-form{background:#171b22;border:1px solid #2a303b;border-radius:10px;padding:24px;width:min(320px,90vw)}
-h1{color:#c8a75a;font-size:18px;margin:0 0 12px}input,button{width:100%;padding:9px;border-radius:6px;font:inherit;box-sizing:border-box}
-input{background:#0e1116;color:#e6e9ef;border:1px solid #2a303b;margin-bottom:10px}button{background:#c8a75a;border:0;font-weight:600;cursor:pointer}
-p{color:#e5636b;font-size:13px}</style></head><body><form method="post" action="/login">
-<h1>Champ Picker</h1>%ERROR%<input type="password" name="password" placeholder="Password" autofocus>
+<style>body{margin:0;background:#08081f;color:#fff;font:14px Inter,system-ui,"Segoe UI",sans-serif;display:grid;place-items:center;height:100vh}
+form{background:#12122d;border-radius:8px;padding:28px;width:min(340px,90vw)}
+h1{font-size:18px;font-weight:800;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+h1 span{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:13px;background:linear-gradient(135deg,#3c7cff,#7a4dff)}
+input,button{width:100%;height:40px;padding:0 12px;border-radius:6px;font:inherit;box-sizing:border-box}
+input{background:#08081f;color:#fff;border:1px solid #26264a;margin-bottom:10px;outline:none}input:focus{border-color:#3c7cff}
+button{background:#3c7cff;color:#fff;border:0;font-weight:600;cursor:pointer}button:hover{background:#2a5fd1}
+p{color:#ff5a5f;font-size:13px;margin:0 0 10px}</style></head><body><form method="post" action="/login">
+<h1><span>CP</span>Champ Picker</h1>%ERROR%<input type="password" name="password" placeholder="Password" autofocus>
 <button>Sign in</button></form></body></html>"""
 
 
@@ -408,6 +466,9 @@ def make_handler(app_factory):
                     if not cid:
                         return self._json({"error": "unknown champion"}, 400)
                     self._json(app.champion_page(cid, q.get("role", "").upper() or None))
+                elif path == "/api/me":
+                    app.refresh()
+                    self._json(app.my_stats())
                 elif path == "/api/profile":
                     self._json(app.player(q.get("riot_id", "")))
                 elif path == "/api/counters":

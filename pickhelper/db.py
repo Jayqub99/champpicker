@@ -294,3 +294,46 @@ def has_match(conn: Database, match_id: str) -> bool:
     """True when the match is stored with build data (older rows get fetched again)."""
     row = conn.execute("SELECT has_builds FROM matches WHERE match_id=?", (match_id,)).fetchone()
     return bool(row and row[0])
+
+
+def _patch_key(p: str):
+    try:
+        return tuple(int(x) for x in p.split("."))
+    except ValueError:
+        return (0,)
+
+
+def _delete_matches(conn: Database, where: str, args: list) -> int:
+    keep_mine = "match_id NOT IN (SELECT match_id FROM my_games)"
+    ids = [r[0] for r in conn.execute(f"SELECT match_id FROM matches WHERE {where} AND {keep_mine}", args)]
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        for table in ("participants", "bans", "matches"):
+            conn.execute(f"DELETE FROM {table} WHERE match_id IN ({marks})", chunk)
+    conn.commit()
+    return len(ids)
+
+
+def prune(conn: Database, keep_patches: int = 2, max_matches: int = 55000) -> dict:
+    """Keep the database small: drop games from old patches, then the oldest
+    games if there are still more than max_matches. Your own games are kept."""
+    patches = sorted({r[0] for r in conn.execute("SELECT DISTINCT patch FROM matches")}, key=_patch_key, reverse=True)
+    old = patches[keep_patches:]
+    dropped_old = _delete_matches(conn, f"patch IN ({','.join('?' * len(old))})", old) if old else 0
+    total = conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+    dropped_extra = 0
+    if total > max_matches:
+        cutoff = conn.execute("SELECT game_start FROM matches ORDER BY game_start DESC LIMIT 1 OFFSET ?",
+                              (max_matches,)).fetchone()
+        if cutoff:
+            dropped_extra = _delete_matches(conn, "game_start <= ?", [cutoff[0]])
+    return {"old_patches": dropped_old, "over_limit": dropped_extra,
+            "left": conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]}
+
+
+def add_players(conn: Database, match: dict, tier: str | None = None) -> None:
+    """Everyone in a crawled game becomes someone to crawl later (they're at a similar rank)."""
+    for p in match.get("info", {}).get("participants", []):
+        if p.get("puuid") and p["puuid"] != "BOT":
+            conn.execute("INSERT INTO players (puuid, tier) VALUES (?,?) ON CONFLICT DO NOTHING", (p["puuid"], tier))
