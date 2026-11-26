@@ -149,15 +149,33 @@ class RiotClientTests(unittest.TestCase):
 
         def opener(req, timeout):
             seen["url"], seen["key"] = req.full_url, req.get_header("X-riot-token")
+            seen["ua"] = req.get_header("User-agent")
             raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, io.BytesIO(b'{"status":"nf"}'))
         c = RiotClient("RGAPI-test", opener=opener)
         with self.assertRaises(RiotError) as ctx:
             c.account_by_riot_id("Some Name#NA1")
         self.assertEqual(ctx.exception.status, 404)
         self.assertEqual(seen["key"], "RGAPI-test")
+        self.assertTrue(seen["ua"].startswith("champpicker/"))  # Cloudflare blocks Python-urllib
         self.assertNotIn("RGAPI", seen["url"])
         self.assertIn("americas.api.riotgames.com/riot/account/v1/accounts/by-riot-id/Some%20Name/NA1",
                       seen["url"])
+
+    def test_error_hints(self):
+        self.assertIn("git pull", RiotError(403, "error code: 1010").hint())
+        self.assertIn("expire", RiotError(403, '{"status":{"message":"Forbidden"}}').hint())
+        self.assertIn("riot_id", RiotError(404, "nf").hint())
+
+    def test_ddragon_sends_user_agent(self):
+        from pickhelper import ddragon
+        seen = {}
+        orig = ddragon.urllib.request.urlopen
+        ddragon.urllib.request.urlopen = lambda req, timeout: seen.setdefault("ua", req.get_header("User-agent"))
+        try:
+            ddragon._get("https://example.invalid/x", 5)
+        finally:
+            ddragon.urllib.request.urlopen = orig
+        self.assertTrue(seen["ua"].startswith("champpicker/"))
 
     def test_requires_key(self):
         with self.assertRaises(ValueError):

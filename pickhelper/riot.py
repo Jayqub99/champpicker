@@ -16,11 +16,26 @@ from typing import Any, Callable
 
 PERSONAL_LIMITS = ((20, 1.0), (100, 120.0))
 
+# Riot sits behind Cloudflare, which rejects Python's default "Python-urllib"
+# User-Agent with "error code: 1010". Always send our own.
+USER_AGENT = "champpicker/0.1 (personal League draft helper)"
+
 
 class RiotError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(f"Riot API {status}: {message}")
         self.status = status
+        self.body = message
+
+    def hint(self) -> str:
+        if "1010" in self.body:
+            return "Riot's firewall rejected the request signature. Update champpicker (git pull)."
+        if self.status in (401, 403):
+            return ("Riot rejected the API key. Development keys expire every 24 hours: "
+                    "get a fresh one from the Riot Developer Portal and update config.json.")
+        if self.status == 404:
+            return "Not found. Check riot_id in config.json (Name#TAG) and platform/region."
+        return ""
 
 
 class RateLimiter:
@@ -80,7 +95,8 @@ class RiotClient:
             url += "?" + urllib.parse.urlencode(params)
         for attempt in range(retries + 1):
             limiter.acquire()
-            req = urllib.request.Request(url, headers={"X-Riot-Token": self.api_key})
+            req = urllib.request.Request(url, headers={"X-Riot-Token": self.api_key,
+                                                         "User-Agent": USER_AGENT})
             self.requests_made += 1
             try:
                 with self._open(req, timeout=20) as resp:

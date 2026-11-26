@@ -6,6 +6,12 @@ import urllib.request
 from pathlib import Path
 
 BASE = "https://ddragon.leagueoflegends.com"
+USER_AGENT = "champpicker/0.1 (personal League draft helper)"
+
+
+def _get(url: str, timeout: int):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 class Champions:
@@ -38,7 +44,7 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in s.lower() if ch.isalnum())
 
 
-def load(data_dir: Path, fetch=urllib.request.urlopen) -> Champions:
+def load(data_dir: Path, fetch=_get) -> Champions:
     """Latest champion list, cached on disk so it still works offline."""
     data_dir.mkdir(parents=True, exist_ok=True)
     try:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 
 from . import config, crawl, db, ddragon, engine, me
-from .riot import RiotClient
+from .riot import RiotClient, RiotError
 from .stats import Stats
 
 
@@ -42,15 +42,20 @@ def main(argv=None):
             client = RiotClient(cfg.api_key, cfg.platform, cfg.region)
         except ValueError as e:
             raise SystemExit(str(e))
-        if args.cmd == "sync-me":
-            if not cfg.riot_id:
-                raise SystemExit("Set riot_id in config.json first.")
-            me.sync(client, conn, cfg.riot_id)
-        elif args.cmd == "seed":
-            crawl.seed_players(client, conn, cfg.crawl_tiers, args.pages)
-        else:
-            n = crawl.crawl(client, conn, args.max_requests, args.per_player)
-            print(f"Done: {n} new matches.")
+        try:
+            if args.cmd == "sync-me":
+                if not cfg.riot_id:
+                    raise SystemExit("Set riot_id in config.json first.")
+                me.sync(client, conn, cfg.riot_id)
+            elif args.cmd == "seed":
+                crawl.seed_players(client, conn, cfg.crawl_tiers, args.pages)
+            else:
+                if not conn.execute("SELECT 1 FROM players LIMIT 1").fetchone():
+                    raise SystemExit("No players to crawl yet. Run: python -m pickhelper seed")
+                n = crawl.crawl(client, conn, args.max_requests, args.per_player)
+                print(f"Done: {n} new matches.")
+        except RiotError as e:
+            raise SystemExit(f"{e}\n{e.hint()}".strip())
         return
 
     champs = ddragon.load(config.DATA_DIR)
