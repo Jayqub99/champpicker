@@ -1,4 +1,4 @@
-"""Local web app: live best-pick plus counters and tier list.
+"""Local web app: live best-pick, champion pages, tier list and player lookup.
 
 Serves on 127.0.0.1 only. A background thread watches the League client
 for champ select and recomputes picks whenever the draft changes.
@@ -14,8 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import db, engine, lcu
+from . import builds, db, engine, lcu, profile
 from .config import Config
+from .riot import RiotClient, RiotError
 from .ddragon import Champions
 from .stats import Stats
 
@@ -31,6 +32,19 @@ class App:
         self.stats = Stats(self.conn, cfg.patches_to_use)
         self.live = {"connected": False, "in_champ_select": False}
         self._last_key = None
+        self._match_count = self._count()
+        self.riot = RiotClient(cfg.api_key, cfg.platform, cfg.region) if cfg.api_key else None
+
+    def _count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+
+    def refresh(self) -> None:
+        """Pick up matches a crawl added while the app was running."""
+        with self.lock:
+            n = self._count()
+            if n != self._match_count:
+                self._match_count = n
+                self.stats = Stats(self.conn, self.cfg.patches_to_use)
 
     # -- shared -----------------------------------------------------------------
     def pool(self, role: str) -> list[int]:
@@ -70,17 +84,57 @@ class App:
 
     def tierlist(self, role: str, min_games: int = 30) -> list[dict]:
         with self.lock:
-            total = self.stats.role_games.get(role, 0)
+            matches = self.stats.match_count or 1
+            bans = self.stats.ban_rates
             out = []
             for (c, pos), (n, w) in self.stats.champ_role.items():
                 if pos != role or n < min_games:
                     continue
+                adj = 100 * engine.shrunk(w, n, 0.5, engine.K_BASE)
+                pick = 100 * n / matches          # share of games with this champ in this role
+                ban = 100 * bans.get(c, 0.0)
                 out.append({"champion_id": c, "name": self.champs.name(c), "games": n,
-                            "win_pct": round(100 * w / n, 1),
-                            "adjusted_win_pct": round(100 * engine.shrunk(w, n, 0.5, engine.K_BASE), 1),
-                            "pick_pct": round(100 * n / total, 1) if total else 0,
+                            "win_pct": round(100 * w / n, 1), "adjusted_win_pct": round(adj, 1),
+                            "pick_pct": round(pick, 1), "ban_pct": round(ban, 1),
+                            "tier": _tier(adj, pick + ban),
                             "image": self.champs.by_id.get(c, {}).get("image")})
-        return sorted(out, key=lambda x: -x["adjusted_win_pct"])
+        return sorted(out, key=lambda x: (TIERS.index(x["tier"]), -x["adjusted_win_pct"]))
+
+    def champion_page(self, cid: int, role: str | None) -> dict:
+        with self.lock:
+            roles = self.stats.role_share(cid)
+            role = role or (max(roles, key=roles.get) if roles else self.cfg.role)
+            page = {"champion": self.champs.by_id.get(cid), "role": role,
+                    "roles": {k: round(100 * v, 1) for k, v in sorted(roles.items(), key=lambda kv: -kv[1])},
+                    "ban_pct": round(100 * self.stats.ban_rates.get(cid, 0.0), 1),
+                    "build": builds.champion_build(self.conn, self.stats.patches, cid, role, self.champs)}
+            partner = engine.DUO.get(role)
+            if partner:
+                n, w = self.stats.champ_role.get((cid, role), (0, 0))
+                base = engine.shrunk(w, n, 0.5, engine.K_BASE)
+                duos = []
+                for r in self.stats.partners(cid, role, partner, same_team=True):
+                    duos.append({"name": self.champs.name(r["o"]), "games": r["n"],
+                                 "win_pct": round(100 * r["w"] / r["n"], 1),
+                                 "adjusted_win_pct": round(100 * engine.shrunk(r["w"], r["n"], base, engine.K_PAIR), 1),
+                                 "image": self.champs.by_id.get(r["o"], {}).get("image")})
+                page["duos"] = sorted(duos, key=lambda x: -x["adjusted_win_pct"])[:8]
+                page["duo_role"] = partner
+        page["matchups"] = self.counters(cid, role)
+        return page
+
+    def player(self, riot_id: str) -> dict:
+        if not self.riot:
+            return {"error": "Add your Riot API key to config.json to look up players."}
+        conn = db.connect(self.cfg.db_path)  # own connection: lookups take several seconds
+        try:
+            return profile.lookup(self.riot, conn, riot_id, self.champs)
+        except RiotError as e:
+            return {"error": e.hint() or str(e)}
+        except ValueError as e:
+            return {"error": str(e)}
+        finally:
+            conn.close()
 
     # -- live champ select --------------------------------------------------------
     def poll_forever(self, interval: float = 1.5):
@@ -120,6 +174,18 @@ class App:
                          "updated": time.time()}
 
 
+TIERS = ["S+", "S", "A", "B", "C", "D"]
+
+
+def _tier(adjusted_win_pct: float, pick_plus_ban_pct: float) -> str:
+    """Tier from win rate vs 50%, nudged up one step for very popular champions."""
+    edge = adjusted_win_pct - 50
+    i = 0 if edge >= 2.5 else 1 if edge >= 1.5 else 2 if edge >= 0.5 else 3 if edge >= -0.5 else 4 if edge >= -1.5 else 5
+    if pick_plus_ban_pct >= 20 and i > 0:
+        i -= 1
+    return TIERS[i]
+
+
 def _ids(app: App, raw: str) -> list[int]:
     return [c for c in (app.champs.find(x) for x in raw.split(",") if x.strip()) if c]
 
@@ -149,6 +215,7 @@ def make_handler(app: App):
                     self.end_headers()
                     self.wfile.write(body)
                 elif url.path == "/api/status":
+                    app.refresh()
                     self._json(app.status())
                 elif url.path == "/api/live":
                     self._json(app.live)
@@ -158,12 +225,21 @@ def make_handler(app: App):
                     allies = [engine.Ally(c) for c in _ids(app, q.get("allies", ""))]
                     self._json(app.recommend(role, allies, _ids(app, q.get("enemies", "")),
                                              _ids(app, q.get("bans", "")), top=int(q.get("top", 5))))
+                elif url.path == "/api/champion":
+                    app.refresh()
+                    cid = app.champs.find(q.get("champion", ""))
+                    if not cid:
+                        return self._json({"error": "unknown champion"}, 400)
+                    self._json(app.champion_page(cid, q.get("role", "").upper() or None))
+                elif url.path == "/api/profile":
+                    self._json(app.player(q.get("riot_id", "")))
                 elif url.path == "/api/counters":
                     cid = app.champs.find(q.get("champion", ""))
                     if not cid:
                         return self._json({"error": "unknown champion"}, 400)
                     self._json(app.counters(cid, role))
                 elif url.path == "/api/tierlist":
+                    app.refresh()
                     self._json(app.tierlist(role))
                 else:
                     self._json({"error": "not found"}, 404)

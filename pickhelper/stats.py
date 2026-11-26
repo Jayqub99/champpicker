@@ -103,17 +103,36 @@ class Stats:
 
     def lane_opponents(self, cid: int, pos: str, min_games: int = 10) -> list[dict]:
         """All same-lane matchups for one champion (the counters page)."""
+        return self.partners(cid, pos, pos, same_team=False, min_games=min_games)
+
+    def partners(self, cid: int, pos: str, other_pos: str, same_team: bool,
+                 min_games: int = 10) -> list[dict]:
+        """Results with (duos) or against (counters) each champion in `other_pos`."""
         if not self.patches:
             return []
         clause, args = self._patch_clause()
+        team = "=" if same_team else "<>"
         q = f"""SELECT b.champion_id o, COUNT(*) n, SUM(a.win) w
                 FROM participants a
-                JOIN participants b ON a.match_id = b.match_id AND a.team_id <> b.team_id
-                                    AND b.position = a.position
+                JOIN participants b ON a.match_id = b.match_id AND a.team_id {team} b.team_id
+                                    AND b.position = ?
                 JOIN matches m ON m.match_id = a.match_id
                 WHERE {clause} AND a.position = ? AND a.champion_id = ?
                 GROUP BY o HAVING n >= ?"""
-        return [dict(r) for r in self.conn.execute(q, list(args) + [pos, cid, min_games])]
+        return [dict(r) for r in self.conn.execute(q, [other_pos] + list(args) + [pos, cid, min_games])]
+
+    @cached_property
+    def ban_rates(self) -> dict[int, float]:
+        """Share of games in which each champion was banned (by either team)."""
+        if not self.patches:
+            return {}
+        clause, args = self._patch_clause()
+        q = f"""SELECT b.champion_id c, COUNT(DISTINCT b.match_id) n
+                FROM bans b JOIN matches m USING (match_id)
+                WHERE {clause} AND m.has_builds = 1 GROUP BY c"""
+        games = self.conn.execute(
+            f"SELECT COUNT(*) FROM matches m WHERE {clause} AND m.has_builds = 1", args).fetchone()[0]
+        return {r["c"]: r["n"] / games for r in self.conn.execute(q, args)} if games else {}
 
     def top_in_role(self, pos: str, limit: int = 15) -> list[int]:
         ranked = sorted(((n, c) for (c, p), (n, _) in self.champ_role.items() if p == pos), reverse=True)

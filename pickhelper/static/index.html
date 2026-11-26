@@ -3,50 +3,72 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pick Helper</title>
+<title>Champ Picker</title>
 <style>
-  :root { --bg:#0e1116; --panel:#171b22; --line:#2a303b; --text:#e6e9ef; --muted:#8b93a3;
+  :root { --bg:#0e1116; --panel:#171b22; --panel2:#1e232c; --line:#2a303b; --text:#e6e9ef; --muted:#8b93a3;
           --accent:#c8a75a; --good:#4cc38a; --bad:#e5636b; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, Segoe UI, sans-serif; }
   header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; color:var(--accent); }
+  nav { display:flex; flex-wrap:wrap; gap:2px; }
   nav button { background:none; border:0; color:var(--muted); padding:6px 10px; cursor:pointer; font:inherit; border-radius:6px; }
   nav button.on { color:var(--text); background:var(--panel); }
   #status { margin-left:auto; color:var(--muted); font-size:13px; }
-  main { max-width:960px; margin:0 auto; padding:20px 16px; }
+  main { max-width:1040px; margin:0 auto; padding:20px 16px; }
   section { display:none; } section.on { display:block; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
-  .muted { color:var(--muted); }
+  .panel h2 { font-size:15px; margin:0 0 10px; }
+  .muted { color:var(--muted); } .small { font-size:13px; }
+  .row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:160px; }
   .pick { display:flex; gap:14px; align-items:flex-start; padding:12px 0; border-top:1px solid var(--line); }
   .pick:first-child { border-top:0; }
   .pick img { width:56px; height:56px; border-radius:8px; }
   .pick h3 { margin:0 0 2px; font-size:17px; }
-  .pick .pct { color:var(--accent); font-weight:600; }
+  .pct { color:var(--accent); font-weight:600; }
   .pick ul { margin:4px 0 0; padding-left:18px; color:var(--muted); font-size:14px; }
   .tag { font-size:12px; color:var(--bad); margin-left:6px; }
   .draft { display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:14px; }
   label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
   input, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
-  button.go { margin-top:12px; background:var(--accent); color:#111; border:0; border-radius:6px; padding:8px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button.go { background:var(--accent); color:#111; border:0; border-radius:6px; padding:8px 16px; font:inherit; font-weight:600; cursor:pointer; }
   table { width:100%; border-collapse:collapse; font-size:14px; }
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:500; }
   td img { width:24px; height:24px; border-radius:4px; vertical-align:middle; margin-right:6px; }
+  tr.click { cursor:pointer; } tr.click:hover { background:var(--panel2); }
   .good { color:var(--good); } .bad { color:var(--bad); }
   .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  @media (max-width:640px) { .cols, .draft { grid-template-columns:1fr; } }
+  .cols3 { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; }
+  .icons { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .icons img { width:34px; height:34px; border-radius:6px; background:var(--panel2); }
+  .icons .arrow { color:var(--muted); }
+  .chip { display:inline-block; padding:2px 8px; border-radius:999px; background:var(--panel2); font-size:12px; color:var(--muted); margin-right:4px; }
+  .champ-head { display:flex; gap:14px; align-items:center; }
+  .champ-head img { width:64px; height:64px; border-radius:10px; }
+  .champ-head h2 { margin:0; font-size:22px; }
+  .roles button { background:var(--panel2); color:var(--muted); border:0; border-radius:6px; padding:4px 10px; margin:6px 4px 0 0; cursor:pointer; font:inherit; font-size:13px; }
+  .roles button.on { color:#111; background:var(--accent); }
+  .skills { font-family:ui-monospace, Consolas, monospace; letter-spacing:2px; }
+  .tier { font-weight:700; } .tS\+, .tS { color:var(--accent); } .tA { color:var(--good); } .tD { color:var(--bad); }
+  .game { display:grid; grid-template-columns:6px 44px 1fr auto; gap:10px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .game .bar { height:40px; border-radius:3px; } .game.win .bar { background:var(--good); } .game.loss .bar { background:var(--bad); }
+  .game > img { width:44px; height:44px; border-radius:8px; }
+  .game .icons img { width:22px; height:22px; border-radius:4px; }
+  @media (max-width:700px) { .cols, .cols3, .draft { grid-template-columns:1fr; } }
   footer { color:var(--muted); font-size:12px; text-align:center; padding:20px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Pick Helper</h1>
+  <h1>Champ Picker</h1>
   <nav>
     <button data-tab="live" class="on">Live pick</button>
-    <button data-tab="build">Pick builder</button>
-    <button data-tab="counters">Counters</button>
+    <button data-tab="champ">Champions</button>
     <button data-tab="tiers">Tier list</button>
+    <button data-tab="profile">Profile</button>
+    <button data-tab="build">Pick builder</button>
   </nav>
   <div id="status">Loading…</div>
 </header>
@@ -56,6 +78,30 @@
     <div class="panel" id="live-picks" hidden></div>
   </section>
 
+  <section id="champ">
+    <div class="panel row">
+      <div><label>Champion</label><input id="c-champ" list="champs" placeholder="Jinx"></div>
+      <div style="flex:0"><button class="go" id="c-go">Open</button></div>
+    </div>
+    <div id="c-out"></div>
+  </section>
+
+  <section id="tiers">
+    <div class="panel row">
+      <div><label>Role</label><select id="t-role"></select></div>
+      <div style="flex:0"><button class="go" id="t-go">Show tier list</button></div>
+    </div>
+    <div class="panel" id="t-out" hidden></div>
+  </section>
+
+  <section id="profile">
+    <div class="panel row">
+      <div><label>Riot ID</label><input id="p-id" placeholder="Name#NA1"></div>
+      <div style="flex:0"><button class="go" id="p-go">Look up</button></div>
+    </div>
+    <div id="p-out"></div>
+  </section>
+
   <section id="build">
     <div class="panel">
       <p class="muted" style="margin-top:0">Try a draft by hand. Separate champions with commas.</p>
@@ -63,42 +109,29 @@
       <label>Allies picked</label><input id="b-allies" list="champs" placeholder="Thresh, Ahri">
       <label>Enemies picked</label><input id="b-enemies" list="champs" placeholder="Draven, Nautilus">
       <label>Bans</label><input id="b-bans" list="champs" placeholder="Yone">
-      <button class="go" id="b-go">Recommend</button>
+      <p><button class="go" id="b-go">Recommend</button></p>
     </div>
     <div class="panel" id="b-out" hidden></div>
   </section>
-
-  <section id="counters">
-    <div class="panel">
-      <label>Champion</label><input id="c-champ" list="champs" placeholder="Jinx">
-      <label>Role</label><select id="c-role"></select>
-      <button class="go" id="c-go">Show matchups</button>
-    </div>
-    <div id="c-out"></div>
-  </section>
-
-  <section id="tiers">
-    <div class="panel">
-      <label>Role</label><select id="t-role"></select>
-      <button class="go" id="t-go">Show tier list</button>
-    </div>
-    <div class="panel" id="t-out" hidden></div>
-  </section>
 </main>
 <datalist id="champs"></datalist>
-<footer>Pick Helper isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</footer>
+<footer>Champ Picker isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</footer>
 
 <script>
 const ROLES = [["TOP","Top"],["JUNGLE","Jungle"],["MIDDLE","Mid"],["BOTTOM","ADC"],["UTILITY","Support"]];
+const roleName = r => (ROLES.find(x => x[0] === r) || [r, r])[1];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const api = async (path) => { const r = await fetch(path); return r.json(); };
+const icon = (x, size) => x && x.image ? `<img src="${esc(x.image)}" alt="${esc(x.name)}" title="${esc(x.name)}"${size ? ` style="width:${size}px;height:${size}px"` : ""}>` : (x ? `<span class="chip">${esc(x.name)}</span>` : "");
+const stat = s => s ? `<span class="small muted">${s.win_pct}% win · ${s.pick_pct}% of games · ${s.games}</span>` : "";
 let STATUS = {};
 
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+function show(tab) {
   document.querySelectorAll("nav button, section").forEach(x => x.classList.remove("on"));
-  b.classList.add("on"); $(b.dataset.tab).classList.add("on");
-});
+  document.querySelector(`nav button[data-tab="${tab}"]`).classList.add("on"); $(tab).classList.add("on");
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.tab));
 
 function picksHtml(picks) {
   if (!picks.length) return '<p class="muted">No candidates left. Check that your pool is set and data has been crawled.</p>';
@@ -122,29 +155,104 @@ async function pollLive() {
     else {
       const d = live.draft;
       st.innerHTML = `<div class="draft">
-        <div><b>Your team</b> (you: ${esc(ROLES.find(r => r[0] === live.role)?.[1] || live.role)})<br>
+        <div><b>Your team</b> (you: ${esc(roleName(live.role))})<br>
           ${d.allies.map(a => esc(a.name) + (a.hover ? " (hovering)" : "")).join(", ") || '<span class="muted">nothing yet</span>'}</div>
         <div><b>Enemy team</b><br>${d.enemies.map(esc).join(", ") || '<span class="muted">nothing yet</span>'}</div>
         <div class="muted">Bans: ${d.bans.map(esc).join(", ") || "none"}</div></div>`;
       out.hidden = false;
-      out.innerHTML = "<h2 style='margin-top:0;font-size:16px'>Best picks for you</h2>" + picksHtml(live.picks);
+      out.innerHTML = "<h2>Best picks for you</h2>" + picksHtml(live.picks);
     }
-  } catch (e) { $("live-state").textContent = "The helper stopped responding. Is it still running?"; }
+  } catch (e) { $("live-state").textContent = "The app stopped responding. Is it still running?"; }
   setTimeout(pollLive, 2000);
 }
 
-async function init() {
-  STATUS = await api("/api/status");
-  const champs = await api("/api/champions");
-  $("champs").innerHTML = champs.map(c => `<option value="${esc(c.name)}">`).join("");
-  for (const id of ["b-role", "c-role", "t-role"])
-    $(id).innerHTML = ROLES.map(([v, l]) => `<option value="${v}" ${v === STATUS.role ? "selected" : ""}>${l}</option>`).join("");
-  $("status").textContent = STATUS.matches
-    ? `${STATUS.matches.toLocaleString()} matches · patch ${STATUS.patches.join(", ")} · ${STATUS.my_games} of your games`
-    : "No match data yet: run crawl";
-  pollLive();
-}
+// ---- Champion page ---------------------------------------------------------
+async function openChampion(name, role) {
+  show("champ"); $("c-champ").value = name;
+  const q = new URLSearchParams({ champion: name }); if (role) q.set("role", role);
+  const out = $("c-out"); out.innerHTML = '<div class="panel muted">Loading…</div>';
+  const d = await api("/api/champion?" + q);
+  if (d.error) { out.innerHTML = `<div class="panel">${esc(d.error)}</div>`; return; }
+  const b = d.build, c = d.champion;
+  const roles = Object.entries(d.roles).filter(([, pct]) => pct >= 3).map(([r, pct]) =>
+    `<button class="${r === d.role ? "on" : ""}" data-role="${r}">${roleName(r)} ${pct}%</button>`).join("");
+  const header = `<div class="panel">
+      <div class="champ-head">${icon(c)}<div><h2>${esc(c.name)}</h2>
+        <div class="small muted">${roleName(d.role)} · ${b.games ? `${b.win_pct}% win in ${b.games} games` : "no games yet"} · ${d.ban_pct}% banned</div></div></div>
+      <div class="roles">${roles}</div></div>`;
+  if (!b.games) { out.innerHTML = header + '<div class="panel muted">No games with builds for this champion and role yet. Run crawl to collect more.</div>'; bindRoles(name); return; }
 
+  const runes = b.runes ? `<div class="panel"><h2>Runes</h2>
+      <div class="icons">${b.runes.styles.map(s => icon(s, 26)).join("")}<span class="arrow">|</span>${b.runes.runes.map(r => icon(r)).join("")}</div>
+      <div class="icons" style="margin-top:6px">${b.runes.shards.map(s => `<span class="chip">${esc(s.name)}</span>`).join("")}</div>
+      ${stat(b.runes)}</div>` : "";
+  const spells = b.spells ? `<div class="panel"><h2>Summoner spells</h2><div class="icons">${b.spells.spells.map(s => icon(s)).join("")}</div>${stat(b.spells)}</div>` : "";
+  const skills = b.skills ? `<div class="panel"><h2>Skill order</h2><div class="pct">${esc(b.skills.priority)}</div>
+      <div class="skills small">${esc(b.skills.order)}</div><span class="small muted">${b.skills.games} games with timelines</span></div>`
+    : `<div class="panel"><h2>Skill order</h2><p class="small muted">Needs timeline data. Run crawl with --timelines.</p></div>`;
+  const start = b.start ? `<div class="panel"><h2>Starting items</h2><div class="icons">${b.start.items.map(i => icon(i)).join("")}</div>${stat(b.start)}</div>` : "";
+  const core = b.core ? `<div class="panel"><h2>Core build${b.core.ordered ? "" : " <span class='small muted'>(order needs timelines)</span>"}</h2>
+      <div class="icons">${b.core.items.map(i => icon(i, 40)).join('<span class="arrow">›</span>')}</div>${stat(b.core)}</div>` : "";
+  const boots = b.boots ? `<div class="panel"><h2>Boots</h2><div class="icons">${icon(b.boots.item, 40)}</div>${stat(b.boots)}</div>` : "";
+  const items = b.items && b.items.length ? `<div class="panel"><h2>Most built items</h2><table>
+      <tr><th>Item</th><th>Win %</th><th>Built in</th></tr>
+      ${b.items.map(i => `<tr><td>${icon(i.item)}${esc(i.item.name)}</td><td>${i.win_pct}%</td><td class="muted">${i.pick_pct}%</td></tr>`).join("")}</table></div>` : "";
+
+  const m = d.matchups;
+  const mrow = (list, cls) => list.map(r => `<tr class="click" data-champ="${esc(r.name)}"><td>${esc(r.name)}</td>
+      <td class="${cls}">${r.win_pct}%</td><td class="muted">${r.games}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">Not enough games yet</td></tr>';
+  const head = "<tr><th>Opponent</th><th>Win %</th><th>Games</th></tr>";
+  const matchups = `<div class="cols">
+      <div class="panel"><h2>Hardest lane matchups</h2><table>${head}${mrow(m.worst, "bad")}</table></div>
+      <div class="panel"><h2>Easiest lane matchups</h2><table>${head}${mrow(m.best, "good")}</table></div></div>`;
+  const duos = d.duos && d.duos.length ? `<div class="panel"><h2>Best ${roleName(d.duo_role)} partners</h2><table>
+      <tr><th>Champion</th><th>Win % together</th><th>Games</th></tr>
+      ${d.duos.map(x => `<tr class="click" data-champ="${esc(x.name)}"><td>${icon(x)}${esc(x.name)}</td><td>${x.win_pct}%</td><td class="muted">${x.games}</td></tr>`).join("")}</table></div>` : "";
+
+  out.innerHTML = header + `<div class="cols">${runes}<div>${spells}${skills}</div></div>
+    <div class="cols3">${start}${core}${boots}</div>${items}${matchups}${duos}`;
+  bindRoles(name);
+  out.querySelectorAll("tr.click").forEach(tr => tr.onclick = () => openChampion(tr.dataset.champ));
+}
+function bindRoles(name) {
+  $("c-out").querySelectorAll(".roles button").forEach(btn => btn.onclick = () => openChampion(name, btn.dataset.role));
+}
+$("c-go").onclick = () => openChampion($("c-champ").value);
+$("c-champ").onkeydown = e => { if (e.key === "Enter") openChampion($("c-champ").value); };
+
+// ---- Tier list -------------------------------------------------------------
+$("t-go").onclick = async () => {
+  const list = await api("/api/tierlist?role=" + $("t-role").value);
+  const out = $("t-out"); out.hidden = false;
+  out.innerHTML = list.length ? `<table><tr><th>Tier</th><th>Champion</th><th>Win %</th><th>Pick %</th><th>Ban %</th><th>Games</th></tr>
+    ${list.map(r => `<tr class="click" data-champ="${esc(r.name)}"><td class="tier t${esc(r.tier)}">${esc(r.tier)}</td>
+      <td>${r.image ? `<img src="${esc(r.image)}" alt="">` : ""}${esc(r.name)}</td>
+      <td>${r.win_pct}%</td><td>${r.pick_pct}%</td><td>${r.ban_pct}%</td><td class="muted">${r.games}</td></tr>`).join("")}</table>`
+    : '<p class="muted">Not enough games in this role yet.</p>';
+  out.querySelectorAll("tr.click").forEach(tr => tr.onclick = () => openChampion(tr.dataset.champ, $("t-role").value));
+};
+
+// ---- Profile ---------------------------------------------------------------
+async function lookup() {
+  const out = $("p-out"); out.innerHTML = '<div class="panel muted">Looking up… (about 12 requests, a few seconds)</div>';
+  const d = await api("/api/profile?riot_id=" + encodeURIComponent($("p-id").value));
+  if (d.error) { out.innerHTML = `<div class="panel">${esc(d.error)}</div>`; return; }
+  const ranks = d.ranks.map(r => `<div><b>${esc(r.queue)}</b><br>${esc(r.tier)} ${esc(r.division)} · ${r.lp} LP
+      <div class="small muted">${r.wins}W ${r.losses}L · ${Math.round(100 * r.wins / Math.max(1, r.wins + r.losses))}% win</div></div>`).join("")
+    || '<div class="muted">Unranked this season</div>';
+  const champs = d.champions.map(c => `<span class="chip">${esc(c.champion)} ${c.wins}W ${c.games - c.wins}L</span>`).join("");
+  const games = d.games.map(g => `<div class="game ${g.win ? "win" : "loss"}"><div class="bar"></div>${icon({ name: g.champion, image: g.image })}
+      <div><b>${esc(g.champion)}</b> <span class="small muted">${esc(g.queue)} · ${g.minutes} min${g.position ? " · " + esc(roleName(g.position)) : ""}${g.remake ? " · remake" : ""}</span>
+        <div class="icons">${g.items.map(i => icon(i)).join("")}</div></div>
+      <div style="text-align:right"><b>${esc(g.kda)}</b><div class="small muted">${g.cs} CS (${g.cs_per_min}/min)</div>
+        <div class="small muted">${g.started ? new Date(g.started).toLocaleDateString() : ""}</div></div></div>`).join("");
+  out.innerHTML = `<div class="panel"><h2>${esc(d.riot_id)}</h2><div class="cols">${ranks}</div></div>
+    <div class="panel"><h2>Last ${d.games.length} games: ${d.recent_wins}W ${d.recent_games - d.recent_wins}L</h2>${champs}${games}</div>`;
+}
+$("p-go").onclick = lookup;
+$("p-id").onkeydown = e => { if (e.key === "Enter") lookup(); };
+
+// ---- Pick builder ----------------------------------------------------------
 $("b-go").onclick = async () => {
   const q = new URLSearchParams({ role: $("b-role").value, allies: $("b-allies").value,
                                   enemies: $("b-enemies").value, bans: $("b-bans").value });
@@ -152,30 +260,17 @@ $("b-go").onclick = async () => {
   out.innerHTML = picksHtml(await api("/api/recommend?" + q));
 };
 
-$("c-go").onclick = async () => {
-  const q = new URLSearchParams({ champion: $("c-champ").value, role: $("c-role").value });
-  const d = await api("/api/counters?" + q);
-  if (d.error) { $("c-out").innerHTML = `<div class="panel">${esc(d.error)}</div>`; return; }
-  const rows = (list, cls) => list.map(r => `<tr><td>${esc(r.name)}</td>
-      <td class="${cls}">${r.win_pct}%</td><td class="muted">${r.games}</td></tr>`).join("");
-  const head = "<tr><th>Opponent</th><th>Win %</th><th>Games</th></tr>";
-  $("c-out").innerHTML = `<p class="muted">${esc(d.champion)}: ${d.games} games in this role${d.win_pct != null ? ", " + d.win_pct + "% won" : ""}.
-      Lists are ordered by win rate adjusted for sample size.</p>
-    <div class="cols">
-      <div class="panel"><b>Hardest matchups</b><table>${head}${rows(d.worst, "bad")}</table></div>
-      <div class="panel"><b>Easiest matchups</b><table>${head}${rows(d.best, "good")}</table></div>
-    </div>`;
-};
-
-$("t-go").onclick = async () => {
-  const list = await api("/api/tierlist?role=" + $("t-role").value);
-  const out = $("t-out"); out.hidden = false;
-  out.innerHTML = list.length ? `<table><tr><th>#</th><th>Champion</th><th>Win %</th><th>Pick %</th><th>Games</th></tr>
-    ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${r.image ? `<img src="${esc(r.image)}" alt="">` : ""}${esc(r.name)}</td>
-      <td>${r.win_pct}%</td><td>${r.pick_pct}%</td><td class="muted">${r.games}</td></tr>`).join("")}</table>`
-    : '<p class="muted">Not enough games in this role yet.</p>';
-};
-
+async function init() {
+  STATUS = await api("/api/status");
+  const champs = await api("/api/champions");
+  $("champs").innerHTML = champs.map(c => `<option value="${esc(c.name)}">`).join("");
+  for (const id of ["b-role", "t-role"])
+    $(id).innerHTML = ROLES.map(([v, l]) => `<option value="${v}" ${v === STATUS.role ? "selected" : ""}>${l}</option>`).join("");
+  $("status").textContent = STATUS.matches
+    ? `${STATUS.matches.toLocaleString()} matches · patch ${STATUS.patches.join(", ")} · ${STATUS.my_games} of your games`
+    : "No match data yet: run crawl";
+  pollLive();
+}
 init();
 </script>
 </body>

@@ -24,6 +24,8 @@ def main(argv=None):
     c = sub.add_parser("crawl")
     c.add_argument("--max-requests", type=int, default=1000)
     c.add_argument("--per-player", type=int, default=10)
+    c.add_argument("--timelines", action="store_true",
+                   help="also fetch skill order, starting items and build order (half as many games)")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8777)
     v.add_argument("--no-watch", action="store_true", help="don't watch the League client")
@@ -52,7 +54,9 @@ def main(argv=None):
             else:
                 if not conn.execute("SELECT 1 FROM players LIMIT 1").fetchone():
                     raise SystemExit("No players to crawl yet. Run: python -m pickhelper seed")
-                n = crawl.crawl(client, conn, args.max_requests, args.per_player)
+                items = ddragon.load(config.DATA_DIR).is_completed if args.timelines else (lambda i: True)
+                n = crawl.crawl(client, conn, args.max_requests, args.per_player,
+                                timelines=args.timelines, is_completed_item=items)
                 print(f"Done: {n} new matches.")
         except RiotError as e:
             raise SystemExit(f"{e}\n{e.hint()}".strip())

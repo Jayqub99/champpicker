@@ -143,3 +143,9 @@ class RiotClient:
 
     def match(self, match_id: str) -> dict:
         return self.get(f"/lol/match/v5/matches/{match_id}", regional=True)
+
+    def timeline(self, match_id: str) -> dict:
+        return self.get(f"/lol/match/v5/matches/{match_id}/timeline", regional=True)
+
+    def ranks(self, puuid: str) -> list[dict]:
+        return self.get(f"/lol/league/v4/entries/by-puuid/{puuid}")

@@ -45,10 +45,39 @@ def seed_players(client: RiotClient, conn: sqlite3.Connection, tiers: list[str],
 
 
 def crawl(client: RiotClient, conn: sqlite3.Connection, max_requests: int = 1000,
-          matches_per_player: int = 10, log=print) -> int:
-    """Fetch new matches until the request budget runs out. Returns matches stored."""
+          matches_per_player: int = 10, log=print, timelines: bool = False,
+          is_completed_item=lambda item_id: True) -> int:
+    """Fetch new matches until the request budget runs out. Returns matches stored.
+
+    With timelines=True each match costs a second request, which adds skill
+    order, starting items and build order but halves how many games you get.
+    """
     start_requests = client.requests_made
     stored = 0
+
+    # Matches saved before item and rune data was kept: download them again first.
+    stale = [r[0] for r in conn.execute("SELECT match_id FROM matches WHERE has_builds = 0")]
+    if stale:
+        log(f"  updating {len(stale)} older matches with build data")
+    for mid in stale:
+        if client.requests_made - start_requests >= max_requests:
+            conn.commit()
+            return stored
+        try:
+            match = client.match(mid)
+            if db.store_match(conn, match):
+                stored += 1
+                if timelines:
+                    db.store_timeline(conn, match, client.timeline(mid), is_completed_item)
+            else:
+                conn.execute("DELETE FROM matches WHERE match_id = ?", (mid,))
+        except RiotError as e:
+            log(f"  skipped {mid}: {e}")
+        if stored and stored % 50 == 0:
+            conn.commit()
+            log(f"  {stored} matches updated, {client.requests_made - start_requests} requests used")
+    conn.commit()
+
     players = [r["puuid"] for r in conn.execute(
         "SELECT puuid FROM players ORDER BY last_crawled ASC LIMIT 500")]
     random.shuffle(players)
@@ -67,8 +96,11 @@ def crawl(client: RiotClient, conn: sqlite3.Connection, max_requests: int = 1000
             if db.has_match(conn, mid):
                 continue
             try:
-                if db.store_match(conn, client.match(mid)):
+                match = client.match(mid)
+                if db.store_match(conn, match):
                     stored += 1
+                    if timelines:
+                        db.store_timeline(conn, match, client.timeline(mid), is_completed_item)
             except RiotError as e:
                 log(f"  skipped {mid}: {e}")
         conn.commit()

@@ -1,4 +1,4 @@
-"""Champion names and images from Riot's Data Dragon (no API key needed)."""
+"""Champion, item, rune and summoner spell data from Riot's Data Dragon (no key needed)."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,14 @@ from pathlib import Path
 BASE = "https://ddragon.leagueoflegends.com"
 USER_AGENT = "champpicker/0.1 (personal League draft helper)"
 
+# Stat shards aren't in Data Dragon's rune file.
+SHARDS = {5008: "Adaptive Force", 5005: "Attack Speed", 5007: "Ability Haste",
+          5001: "Health Scaling", 5011: "Health", 5013: "Tenacity and Slow Resist",
+          5010: "Move Speed", 5002: "Armor", 5003: "Magic Resist"}
+
+FILES = {"champion": "data/en_US/champion.json", "item": "data/en_US/item.json",
+         "summoner": "data/en_US/summoner.json", "runes": "data/en_US/runesReforged.json"}
+
 
 def _get(url: str, timeout: int):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -15,20 +23,69 @@ def _get(url: str, timeout: int):
 
 
 class Champions:
-    def __init__(self, version: str, data: dict):
+    """All static game data for one patch (named for its first job: champions)."""
+
+    def __init__(self, version: str, data: dict, items: dict | None = None,
+                 summoners: dict | None = None, runes: list | None = None):
         self.version = version
+        cdn = f"{BASE}/cdn/{version}/img"
         self.by_id: dict[int, dict] = {}
         self.by_name: dict[str, int] = {}
         for c in data["data"].values():
             cid = int(c["key"])
             self.by_id[cid] = {"id": cid, "name": c["name"], "slug": c["id"],
                                "tags": c.get("tags", []),
-                               "image": f"{BASE}/cdn/{version}/img/champion/{c['image']['full']}"}
+                               "image": f"{cdn}/champion/{c['image']['full']}"}
             self.by_name[_norm(c["name"])] = cid
             self.by_name[_norm(c["id"])] = cid
 
+        self.items: dict[int, dict] = {}
+        for key, it in ((items or {}).get("data") or {}).items():
+            iid = int(key)
+            tags = it.get("tags", [])
+            gold = (it.get("gold") or {}).get("total", 0)
+            on_rift = (it.get("maps") or {}).get("11", True)
+            boots = "Boots" in tags and gold > 300
+            final = (not it.get("into") and gold >= 2000
+                     and "Consumable" not in tags and "Trinket" not in tags)
+            self.items[iid] = {"id": iid, "name": it.get("name", str(iid)), "gold": gold,
+                               "boots": bool(on_rift and boots),
+                               "legendary": bool(on_rift and final and not boots),
+                               "image": f"{cdn}/item/{(it.get('image') or {}).get('full', f'{iid}.png')}"}
+
+        self.spells: dict[int, dict] = {}
+        for s in ((summoners or {}).get("data") or {}).values():
+            sid = int(s["key"])
+            self.spells[sid] = {"id": sid, "name": s["name"],
+                                "image": f"{cdn}/spell/{s['image']['full']}"}
+
+        self.runes: dict[int, dict] = {}
+        for style in runes or []:
+            self.runes[style["id"]] = {"id": style["id"], "name": style["name"],
+                                       "image": f"{BASE}/cdn/img/{style['icon']}"}
+            for slot in style.get("slots", []):
+                for r in slot.get("runes", []):
+                    self.runes[r["id"]] = {"id": r["id"], "name": r["name"],
+                                           "image": f"{BASE}/cdn/img/{r['icon']}"}
+        for sid, name in SHARDS.items():
+            self.runes.setdefault(sid, {"id": sid, "name": name, "image": None})
+
     def name(self, cid: int) -> str:
         return self.by_id.get(cid, {}).get("name", f"#{cid}")
+
+    def item(self, iid: int) -> dict:
+        return self.items.get(iid, {"id": iid, "name": f"Item {iid}", "image": None,
+                                    "legendary": False, "boots": False, "gold": 0})
+
+    def is_completed(self, iid: int) -> bool:
+        it = self.items.get(iid)
+        return bool(it and (it["legendary"] or it["boots"]))
+
+    def spell(self, sid: int) -> dict:
+        return self.spells.get(sid, {"id": sid, "name": f"Spell {sid}", "image": None})
+
+    def rune(self, rid: int) -> dict:
+        return self.runes.get(rid, {"id": rid, "name": f"Rune {rid}", "image": None})
 
     def find(self, text: str) -> int | None:
         text = str(text).strip()
@@ -45,19 +102,24 @@ def _norm(s: str) -> str:
 
 
 def load(data_dir: Path, fetch=_get) -> Champions:
-    """Latest champion list, cached on disk so it still works offline."""
+    """Latest game data, cached on disk so it still works offline."""
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
         with fetch(f"{BASE}/api/versions.json", timeout=15) as r:
             version = json.loads(r.read())[0]
-        cache = data_dir / f"champion_{version}.json"
-        if not cache.exists():
-            with fetch(f"{BASE}/cdn/{version}/data/en_US/champion.json", timeout=30) as r:
-                cache.write_bytes(r.read())
+        for kind, path in FILES.items():
+            cache = data_dir / f"{kind}_{version}.json"
+            if not cache.exists():
+                with fetch(f"{BASE}/cdn/{version}/{path}", timeout=30) as r:
+                    cache.write_bytes(r.read())
     except OSError:
         cached = sorted(data_dir.glob("champion_*.json"))
         if not cached:
             raise RuntimeError("Can't reach Data Dragon and no cached champion list exists yet.")
-        cache = cached[-1]
-        version = cache.stem.split("_", 1)[1]
-    return Champions(version, json.loads(cache.read_text(encoding="utf-8")))
+        version = cached[-1].stem.split("_", 1)[1]
+
+    def read(kind):
+        f = data_dir / f"{kind}_{version}.json"
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+
+    return Champions(version, read("champion"), read("item"), read("summoner"), read("runes"))

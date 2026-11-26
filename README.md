@@ -1,6 +1,13 @@
 # Champ Picker
 
-A personal League of Legends draft helper. It does u.gg-style lookups (counters, tier list) from match data you collect yourself, and during champ select it ranks the best picks **from your own champion pool**, weighing:
+Your own ad-free, u.gg-style League of Legends site that runs on your PC, built from match data you collect yourself:
+
+- **Champion pages:** runes, summoner spells, starting items, core build, boots, most-built items, skill order, hardest and easiest lane matchups, and best duo partners, per role.
+- **Tier list:** win rate, pick rate, ban rate and a tier per role.
+- **Profile:** look up any Riot ID for rank and recent games.
+- **Live pick:** during champ select it ranks the best picks **from your own champion pool**.
+
+Live pick weighs:
 
 - how each pick does against the enemy champions locked so far (your lane opponent counts most),
 - how it does with the allies already picked or hovered,
@@ -42,13 +49,29 @@ python -m pickhelper crawl --max-requests 3000 # download matches (about an hour
 
 Run `crawl` again whenever you like. It skips matches it already has. A personal key allows 100 requests every 2 minutes, so roughly 50 matches a minute. A few thousand matches are enough for common ADC matchups; rare ones show "little data".
 
+Skill order, starting items and the order items are built in come from match timelines, which cost a second request per game (so half as many games per hour). Turn them on when you want them:
+
+```powershell
+python -m pickhelper crawl --max-requests 3000 --timelines
+```
+
+Matches saved by the first version of the app had no item or rune data. `crawl` downloads those again first, then carries on with new games.
+
 ## Use it
 
 ```powershell
 python -m pickhelper serve
 ```
 
-Open http://127.0.0.1:8777. Leave the **Live pick** tab open, start a game, and picks update as champ select changes. The **Pick builder** tab lets you try a draft by hand, **Counters** shows a champion's hardest and easiest lane matchups, and **Tier list** ranks a role.
+Open http://127.0.0.1:8777.
+
+- **Live pick:** leave it open, start a game, and picks update as champ select changes.
+- **Champions:** type a champion for its build, matchups and duos. Switch roles with the buttons under its name.
+- **Tier list:** pick a role. Click any champion to open its page.
+- **Profile:** type a Riot ID (Name#TAG). Each lookup uses about 12 requests, so avoid it while a crawl is running.
+- **Pick builder:** try a draft by hand.
+
+The site picks up new matches from a crawl without restarting.
 
 Terminal version:
 
@@ -76,4 +99,4 @@ python -m unittest discover -s tests
 
 - Champ select is read from the League client's local API. Riot doesn't officially support it, so a client patch can break it; the rest of the app keeps working.
 - Riot asks that apps using the local client API be registered in the Developer Portal with the endpoints used. This app reads only `/lol-champ-select/v1/session`.
-- Pick Helper isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+- Champ Picker isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
